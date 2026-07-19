@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from poem_video import (
     _t2i, _i2i, _get_key, OUTPUT_DIR,
     FFMPEG, FFPROBE, FRAME_W, FRAME_H, SCENE_W, SCENE_H,
+    _auto_fit_subtitle,
 )
 
 # --- 额外配置 ---
@@ -282,14 +283,15 @@ def create_story_video(
         if seg["is_title"]:
             filter_parts.append(f"[{v_idx}:v]setpts=PTS-STARTPTS[v{i}]")
         else:
-            text = _wrap_text(seg["text"], 15)
-            # 实际换行符 -> ffmpeg drawtext '\n' 序列
-            text = text.replace("\n", "\\n")
-            escaped_text = text.replace("'", "'\\\\\\''").replace(":", "\\\\:")
+            subtitle_text, subtitle_size = _auto_fit_subtitle(
+                seg["text"], font_path,
+                max_width=FRAME_W - 60, font_max=42, font_min=28,
+            )
+            escaped_text = subtitle_text.replace("'", "'\\\\\\''").replace(":", "\\\\:")
             dt = (
                 f"drawtext=text='{escaped_text}'"
                 f":fontfile={font_path}"
-                f":fontsize=42:fontcolor=white"
+                f":fontsize={subtitle_size}:fontcolor=white"
                 f":shadowcolor=black@0.5:shadowx=2:shadowy=2"
                 f":line_spacing=8"
                 f":x=(w-text_w)/2:y=h-text_h-60"

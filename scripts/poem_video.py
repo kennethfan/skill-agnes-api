@@ -89,6 +89,30 @@ def _wrap_text(text: str, max_chars: int = 15) -> str:
     return "\n".join(lines)
 
 
+def _measure_text_width(text: str, font_path: str, fontsize: int) -> int:
+    from PIL import ImageFont
+    try:
+        font = ImageFont.truetype(font_path, fontsize)
+        return int(font.getlength(text))
+    except Exception:
+        cjk = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3000' <= c <= '\u303f')
+        latin = len(text) - cjk
+        return int(cjk * fontsize * 0.95 + latin * fontsize * 0.55)
+
+
+def _auto_fit_subtitle(text: str, font_path: str, max_width: int = 660, font_max: int = 42, font_min: int = 28) -> tuple[str, int]:
+    for max_chars in range(15, 7, -1):
+        wrapped = _wrap_text(text, max_chars)
+        if all(_measure_text_width(l, font_path, font_max) <= max_width for l in wrapped.split('\n')):
+            return wrapped, font_max
+    for fontsize in range(font_max - 2, font_min - 1, -2):
+        for max_chars in range(12, 7, -1):
+            wrapped = _wrap_text(text, max_chars)
+            if all(_measure_text_width(l, font_path, fontsize) <= max_width for l in wrapped.split('\n')):
+                return wrapped, fontsize
+    return _wrap_text(text, 10), font_min
+
+
 def _t2i(prompt: str, size: str = "736x1312") -> str:
     """文生图，返回保存的文件路径（带重试）"""
     max_retries = 5
@@ -350,12 +374,12 @@ def create_poem_video(
             # 片头 — 无字幕
             filter_parts.append(f"[{v_idx}:v]setpts=PTS-STARTPTS[v{i}]")
         else:
-            # 场景 — 用 drawtext 叠加字幕（纯文字，无背景条）
-            text = lines[i - 1]["text"]
-            if len(text) > 15:
-                # 长文本自动换行
-                text = _wrap_text(text, 15).replace("\n", "\\n")
-            dt = f"drawtext=text='{text}':fontfile={font_path}:fontsize=42:fontcolor=white:shadowcolor=black@0.5:shadowx=2:shadowy=2:line_spacing=8:x=(w-text_w)/2:y=h-text_h-60"
+            # 场景 — drawtext 字幕，自动适配字号+换行防止溢出
+            subtitle_text, subtitle_size = _auto_fit_subtitle(
+                lines[i - 1]["text"], font_path,
+                max_width=FRAME_W - 60, font_max=42, font_min=28,
+            )
+            dt = f"drawtext=text='{subtitle_text}':fontfile={font_path}:fontsize={subtitle_size}:fontcolor=white:shadowcolor=black@0.5:shadowx=2:shadowy=2:line_spacing=8:x=(w-text_w)/2:y=h-text_h-60"
             filter_parts.append(f"[{v_idx}:v]setpts=PTS-STARTPTS,{dt}[v{i}]")
         filter_parts.append(f"[{a_idx}:a]adelay=0|0[a{i}]")
 
