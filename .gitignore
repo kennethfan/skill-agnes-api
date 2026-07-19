@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtualenv
+venv/
+.venv/
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# OpenCode / Agent runtime artifacts
+.omo/
+.codegraph/
+.opencode/
+
+# Agent output (user-specific)
+~/agent/media/
