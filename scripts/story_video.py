@@ -27,14 +27,17 @@ import time as _time
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from utils import get_default_dir, get_project_intermediate_dir, get_project_deliverable_dir, cleanup_intermediates, get_font_path
 
 # 复用 poem_video 的函数
 sys.path.insert(0, str(Path(__file__).parent))
 from poem_video import (
-    _t2i, _i2i, _get_key, OUTPUT_DIR,
+    _t2i, _i2i, _get_key,
     FFMPEG, FFPROBE, FRAME_W, FRAME_H, SCENE_W, SCENE_H,
     _auto_fit_subtitle,
 )
+
+OUTPUT_DIR = get_default_dir()
 
 # --- 额外配置 ---
 
@@ -115,7 +118,7 @@ def _wrap_text(text: str, max_chars: int = 15) -> str:
     return "\n".join(lines)
 
 
-def _create_title_card_story(title: str, bg_image: str | None = None) -> str:
+def _create_title_card_story(title: str, bg_image: str | None = None, output_dir: Path | None = None) -> str:
     """创建故事标题卡"""
     from PIL import Image, ImageDraw, ImageFont
 
@@ -127,14 +130,12 @@ def _create_title_card_story(title: str, bg_image: str | None = None) -> str:
     draw = ImageDraw.Draw(bg)
 
     font_title = None
-    for fp in ["/System/Library/Fonts/PingFang.ttc",
-               "/System/Library/Fonts/STHeiti Light.ttc"]:
-        if Path(fp).exists():
-            try:
-                font_title = ImageFont.truetype(fp, 56)
-                break
-            except Exception:
-                continue
+    font_path = get_font_path()
+    if font_path:
+        try:
+            font_title = ImageFont.truetype(font_path, 56)
+        except Exception:
+            pass
     if font_title is None:
         font_title = ImageFont.load_default()
 
@@ -144,16 +145,18 @@ def _create_title_card_story(title: str, bg_image: str | None = None) -> str:
     ty = FRAME_H // 2 - 40
     draw.text((tx, ty), title, fill=(40, 35, 30), font=font_title)
 
-    save_path = OUTPUT_DIR / f"agnes-story-title-{int(_time.time())}.png"
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-story-title-{int(_time.time())}.png"
     bg.save(save_path)
     return str(save_path)
 
 
-def _create_scene_frame_story(scene_image_path: str) -> str:
+def _create_scene_frame_story(scene_image_path: str, output_dir: Path | None = None) -> str:
     """将场景图缩放到视频尺寸（字幕由 ffmpeg drawtext 叠加）"""
     from PIL import Image
     scene = Image.open(scene_image_path).resize((FRAME_W, FRAME_H), Image.LANCZOS)
-    save_path = OUTPUT_DIR / f"agnes-story-frame-{int(_time.time())}.png"
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-story-frame-{int(_time.time())}.png"
     scene.save(save_path)
     return str(save_path)
 
@@ -175,6 +178,7 @@ def create_story_video(
     script_path: str,
     voice: str = DEFAULT_VOICE,
     output: str | None = None,
+    project: str | None = None,
 ) -> str:
     """完整故事视频生成流程。
 
@@ -182,6 +186,7 @@ def create_story_video(
         script_path: YAML 故事脚本路径
         voice: 默认语音（旁白）
         output: 输出视频路径（可选）
+        project: 项目名（可选），指定后使用项目隔离目录
 
     Returns:
         视频文件路径
@@ -195,8 +200,20 @@ def create_story_video(
     scenes = script["scenes"]
     voice_overrides = script.get("characters", {})
 
+    # 路径：项目 vs 默认
+    if project:
+        scenes_dir = get_project_intermediate_dir(project, "scenes")
+        frames_dir = get_project_intermediate_dir(project, "frames")
+        video_dir = get_project_deliverable_dir(project, "videos")
+    else:
+        scenes_dir = OUTPUT_DIR
+        frames_dir = OUTPUT_DIR
+        video_dir = OUTPUT_DIR
+
     print(f"Generating story video: {title}")
     print(f"  Scenes: {len(scenes)}, Style: {style}, Default voice: {voice}")
+    if project:
+        print(f"  Project: {project}")
 
     # ─── Step 1: 生成场景图 ───
     # 第一张 t2i（角色锚定起点），后续 i2i
@@ -204,23 +221,23 @@ def create_story_video(
     for i, scene in enumerate(scenes):
         if i == 0:
             print(f"\n[1/6] Generating scene {i+1} (t2i, anchor)...")
-            scene_path = _t2i(scene["description"], f"{SCENE_W}x{SCENE_H}")
+            scene_path = _t2i(scene["description"], f"{SCENE_W}x{SCENE_H}", output_dir=scenes_dir)
         else:
             print(f"\n[1/6] Generating scene {i+1} (i2i, anchored to first)...")
-            scene_path = _i2i(scene_paths[0], scene["description"], f"{SCENE_W}x{SCENE_H}")
+            scene_path = _i2i(scene_paths[0], scene["description"], f"{SCENE_W}x{SCENE_H}", output_dir=scenes_dir)
         scene_paths.append(scene_path)
         print(f"  Saved: {scene_path}")
 
     # ─── Step 2: 制作标题卡 ───
     print(f"\n[2/6] Creating title card...")
-    title_card = _create_title_card_story(title, bg_image=scene_paths[0])
+    title_card = _create_title_card_story(title, bg_image=scene_paths[0], output_dir=frames_dir)
     print(f"  Saved: {title_card}")
 
     # ─── Step 3: 场景图缩放 ───
     print(f"\n[3/6] Preparing scene frames...")
     frame_paths = []
     for i, sp in enumerate(scene_paths):
-        frame = _create_scene_frame_story(sp)
+        frame = _create_scene_frame_story(sp, output_dir=frames_dir)
         frame_paths.append(frame)
         print(f"  Frame {i+1}: {Path(frame).name}")
 
@@ -268,12 +285,7 @@ def create_story_video(
         input_args.extend(["-loop", "1", "-t", f"{seg['duration']:.3f}", "-i", seg["frame"]])
         input_args.extend(["-i", seg["audio"]])
 
-    # 查找中文字体
-    font_path = None
-    for fp in ["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Light.ttc"]:
-        if Path(fp).exists():
-            font_path = fp
-            break
+    font_path = get_font_path()
 
     # 构建 filter_complex
     filter_parts = []
@@ -303,7 +315,7 @@ def create_story_video(
     filter_complex = "; ".join(filter_parts)
     filter_complex += f"; {concat_input}concat=n={len(segments)}:v=1:a=1[outv][outa]"
 
-    output_path = output or str(OUTPUT_DIR / f"agnes-story-{int(_time.time())}.mp4")
+    output_path = output or str(video_dir / f"agnes-story-{int(_time.time())}.mp4")
     cmd = [
         FFMPEG, "-y",
         *input_args,
@@ -317,6 +329,8 @@ def create_story_video(
 
     # ─── Step 6: 清理 ───
     shutil.rmtree(temp_dir)
+    if project:
+        cleanup_intermediates(project)
 
     print(f"\nVideo saved to: {output_path}")
     return output_path

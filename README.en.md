@@ -49,6 +49,38 @@ export AGNES_API_KEY="your-api-key"
 python3 scripts/check_key.py
 ```
 
+### Path Configuration
+
+All output paths and tool paths are managed by `~/.config/agnes/paths.yaml`. Scripts read this config through `utils.py` — no more hardcoded paths.
+
+| Key | Description | Default |
+|--------|------|--------|
+| `base_dir` | Media root | `~/agent/media` |
+| `default_dir` | Default dir (no project) | `tmp` |
+| `projects_dir` | Projects root | `projects` |
+| `assets_dir` | Shared assets | `assets` |
+| `ffmpeg_bin` | ffmpeg path | `ffmpeg` (uses PATH) |
+| `ffprobe_bin` | ffprobe path | `ffprobe` (uses PATH) |
+| `font_paths` | Chinese font paths (tried in order) | `[]` (auto-fallback) |
+| `cleanup.prompt` | Whether to prompt cleanup of intermediates | `true` |
+| `cleanup.default_yes` | Default cleanup answer | `true` |
+
+Example config:
+
+```yaml
+# ~/.config/agnes/paths.yaml
+base_dir: ~/agent/media
+ffmpeg_bin: /opt/homebrew/bin/ffmpeg
+font_paths:
+  - /System/Library/Fonts/PingFang.ttc
+  - /System/Library/Fonts/STHeiti Light.ttc
+cleanup:
+  prompt: true
+  default_yes: true
+```
+
+When this file doesn't exist, defaults apply automatically.
+
 ---
 
 ## Directory Structure
@@ -61,7 +93,8 @@ python3 scripts/check_key.py
 ├── CONTEXT.md                # Domain glossary
 ├── docs/adr/                 # Architecture Decision Records
 │   ├── 0001-image-refine-tool.md
-│   └── 0002-story-video-architecture.md
+│   ├── 0002-story-video-architecture.md
+│   └── 0003-file-organization.md
 ├── scripts/                  # All code (flat structure, no package)
 │   ├── utils.py              # Shared utilities: API key, HTTP helpers, output dirs
 │   ├── t2i.py                # Text-to-Image (example, runs on import)
@@ -71,10 +104,12 @@ python3 scripts/check_key.py
 │   ├── refine-cli.py         # CLI wrapper
 │   ├── comic.py              # Core — comic generation
 │   ├── comic-cli.py          # CLI wrapper
+│   ├── comic-page-layout.py  # Comic page layout + speech bubbles (standalone)
 │   ├── poem_video.py         # Core — poem-to-video
 │   ├── poem-video-cli.py     # CLI wrapper
 │   ├── story_video.py        # Core — story video (extends poem_video)
 │   ├── story-video-cli.py    # CLI wrapper
+│   ├── t2i_base64.py         # Text-to-Image — Base64 output (example)
 │   ├── t2v.py                # Text-to-Video (example)
 │   ├── i2v.py                # Image-to-Video (example)
 │   ├── keyframes.py          # Keyframe animation (example)
@@ -88,12 +123,45 @@ python3 scripts/check_key.py
 
 ## Output Directories
 
+Output paths are managed by `~/.config/agnes/paths.yaml` (see Path Configuration above). All scripts read this config through `utils.py` instead of hardcoded paths.
+
+### Default Directory (no project)
+
+Generated files without a project name go to:
+
 | Type | Path |
 |------|------|
-| Images | `~/agent/media/images/` |
-| Videos | `~/agent/media/videos/` |
+| Default | `~/agent/media/tmp/` |
 
 Filename format: `agnes-<type>-<timestamp>.<ext>`
+
+### Project-Isolated Directories (recommended)
+
+When `--project` / `project=` is specified, files are organized by role:
+
+```
+~/agent/media/
+├── assets/                          ← Shared input assets
+└── projects/
+    └── <project-name>/
+        ├── <project-name>.yaml      ← Script
+        ├── scenes/                  ← Intermediate: raw t2i scenes
+        ├── panels/                  ← Intermediate: comic panels
+        ├── bubbles/                 ← Intermediate: speech bubble layers
+        ├── frames/                  ← Intermediate: video frames
+        ├── audio/                   ← Intermediate: TTS audio segments
+        └── deliverable/
+            ├── comic-pages/         ← Deliverable: composite PNGs
+            └── videos/              ← Deliverable: final MP4s
+```
+
+| Role | Lifecycle | Description |
+|------|-----------|-------------|
+| **Asset** | Keep | Non-regenerable input (character refs, backgrounds) |
+| **Intermediate** | Deletable | Pipeline temporary files, auto-cleanup after completion |
+| **Deliverable** | Keep | Final output (comic pages PNG, video MP4) |
+
+After each pipeline run, the agent asks "Delete intermediate files?" (default yes) to clean up temporary data. You can also call `utils.cleanup_intermediates()` manually.
 
 ---
 
@@ -149,6 +217,9 @@ python3 scripts/story-video-cli.py --title "Three Little Pigs" --style ink-wash
 
 # Generate from text file
 python3 scripts/story-video-cli.py --textfile my-story.txt
+
+# Project-isolated intermediate files
+python3 scripts/story-video-cli.py --title "Three Little Pigs" --project "three-little-pigs"
 ```
 
 ### Video Generation (Async)
@@ -179,6 +250,10 @@ python3 scripts/poll_video.py <task_id>
 | `1:1` | 1024×1024 | 2048×2048 | 3072×3072 | 4096×4096 |
 | `16:9` | 1312×736 | 2624×1472 | 3936×2208 | 5248×2944 |
 | `9:16` | 736×1312 | 1472×2624 | 2208×3936 | 2944×5248 |
+| `3:4` | 864×1152 | 1728×2304 | 2592×3456 | 3456×4608 |
+| `4:3` | 1152×864 | 2304×1728 | 3456×2592 | 4608×3456 |
+
+Also supports traditional exact sizes like `1024x768`.
 
 ### Video Parameters
 
@@ -186,6 +261,9 @@ python3 scripts/poll_video.py <task_id>
 |-------|-------------|
 | `num_frames` | Total frames, ≤ 441, must satisfy `8n + 1` |
 | `frame_rate` | 1-60 fps |
+| `height` / `width` | Normalized to 480p/720p/1080p tiers |
+| `seed` | Fixed seed for reproducible results |
+| `negative_prompt` | Negative prompt text |
 | Duration ref | ~3s (81f/24fps) / ~5s (121f/24fps) / ~10s (241f/24fps) / ~18s (441f/24fps) |
 
 ---
@@ -203,13 +281,16 @@ path = refine("photo.jpg", "Make it Ghibli style")
 from scripts.comic import create_comic
 path = create_comic("my-comic.yaml", preset="manga")
 
-# Poem video
+# Poem video (default dir)
 from scripts.poem_video import create_poem_video
 path = create_poem_video("my-poem.yaml")
 
-# Story video
+# Poem video (project-isolated — recommended)
+path = create_poem_video("my-poem.yaml", project="静夜思")
+
+# Story video (project-isolated — recommended)
 from scripts.story_video import create_story_video
-path = create_story_video("my-story.yaml")
+path = create_story_video("my-story.yaml", project="三只小猪")
 ```
 
 ### YAML Script Format
@@ -288,6 +369,7 @@ Automatic edge-tts voice assignment for story characters (overridable in YAML):
 
 - [ADR 0001: Image Refinement Tool Based on AGNES I2I](docs/adr/0001-image-refine-tool.md)
 - [ADR 0002: Story Video Architecture](docs/adr/0002-story-video-architecture.md)
+- [ADR 0003: File Organization — Role-Isolated Project Layout](docs/adr/0003-file-organization.md)
 
 ---
 

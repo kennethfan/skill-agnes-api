@@ -13,31 +13,24 @@
 
 import base64
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from utils import get_default_dir, get_api_key, get_project_intermediate_dir, get_project_deliverable_dir, cleanup_intermediates, get_font_path
 
 # --- 路径配置 ---
 
-if sys.platform == "win32":
-    CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "agnes"
-else:
-    CONFIG_DIR = Path.home() / ".config" / "agnes"
-
-KEY_PATH = CONFIG_DIR / "key"
+CONFIG_DIR = Path.home() / ".config" / "agnes"
 PRESETS_PATH = CONFIG_DIR / "comic-presets.yaml"
-OUTPUT_DIR = Path.home() / "agent" / "media" / "images"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = get_default_dir()
 
 API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 MODEL = "agnes-image-2.1-flash"
 
 
 def _get_key() -> str:
-    return (KEY_PATH).read_text(encoding="utf-8").strip()
+    return get_api_key()
 
 
 def _load_presets() -> dict:
@@ -71,7 +64,7 @@ def _resolve_image(image: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None) -> str:
+def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None, output_dir: Path | None = None) -> str:
     """文生图，返回保存的文件路径（带重试）"""
     import time as _time
     max_retries = 5
@@ -90,7 +83,8 @@ def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None) -> str:
                 data = json.loads(resp.read())
             image_url = data["data"][0]["url"]
             timestamp = int(time.time())
-            save_path = OUTPUT_DIR / f"agnes-comic-panel-{timestamp}.png"
+            save_dir = output_dir or OUTPUT_DIR
+            save_path = save_dir / f"agnes-comic-panel-{timestamp}.png"
             with urlopen(image_url) as img_resp:
                 save_path.write_bytes(img_resp.read())
             return str(save_path)
@@ -103,7 +97,7 @@ def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None) -> str:
                 raise
 
 
-def _i2i(image: str, prompt: str, size: str = "1024x768", ratio: str | None = None) -> str:
+def _i2i(image: str, prompt: str, size: str = "1024x768", ratio: str | None = None, output_dir: Path | None = None) -> str:
     """图生图，返回保存的文件路径（带重试）"""
     import time as _time
     max_retries = 5
@@ -131,7 +125,8 @@ def _i2i(image: str, prompt: str, size: str = "1024x768", ratio: str | None = No
                 data = json.loads(resp.read())
             image_url = data["data"][0]["url"]
             timestamp = int(time.time())
-            save_path = OUTPUT_DIR / f"agnes-comic-panel-{timestamp}.png"
+            save_dir = output_dir or OUTPUT_DIR
+            save_path = save_dir / f"agnes-comic-panel-{timestamp}.png"
             with urlopen(image_url) as img_resp:
                 save_path.write_bytes(img_resp.read())
             return str(save_path)
@@ -179,6 +174,7 @@ def generate_panel(
     preset: str | None = None,
     custom_prompt: str | None = None,
     size: str = "1024x768",
+    output_dir: Path | None = None,
 ) -> str:
     """生成单个漫画面板。
 
@@ -202,15 +198,15 @@ def generate_panel(
         prompt = description
 
     if character_ref:
-        return _i2i(character_ref, prompt, size=size)
+        return _i2i(character_ref, prompt, size=size, output_dir=output_dir)
     else:
-        return _t2i(prompt, size=size)
+        return _t2i(prompt, size=size, output_dir=output_dir)
 
 
 # ─── 对话框叠加 ───────────────────────────────────────────────
 
 
-def add_speech_bubble(image_path: str, text: str, position: str = "bottom") -> str:
+def add_speech_bubble(image_path: str, text: str, position: str = "bottom", output_dir: Path | None = None) -> str:
     """用 Pillow 在图片上叠加对话框。
 
     Args:
@@ -227,21 +223,14 @@ def add_speech_bubble(image_path: str, text: str, position: str = "bottom") -> s
     draw = ImageDraw.Draw(img)
     w, h = img.size
 
-    # 尝试加载中文字体
+    # 从 paths.yaml 读取中文字体路径
+    font_path = get_font_path()
     font = None
-    font_candidates = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    ]
-    for fp in font_candidates:
-        if Path(fp).exists():
-            try:
-                font = ImageFont.truetype(fp, 28)
-                break
-            except Exception:
-                continue
+    if font_path:
+        try:
+            font = ImageFont.truetype(font_path, 28)
+        except Exception:
+            pass
     if font is None:
         font = ImageFont.load_default()
 
@@ -283,12 +272,13 @@ def add_speech_bubble(image_path: str, text: str, position: str = "bottom") -> s
     for i, line in enumerate(lines):
         draw.text((bx + padding, by + padding + i * line_height), line, fill="black", font=font)
 
-    save_path = OUTPUT_DIR / f"agnes-comic-bubble-{int(time.time())}.png"
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-comic-bubble-{int(time.time())}.png"
     img.save(save_path)
     return str(save_path)
 
 
-def compose_page(panel_paths: list[str], layout: str = "grid", output_path: str | None = None) -> str:
+def compose_page(panel_paths: list[str], layout: str = "grid", output_path: str | None = None, output_dir: Path | None = None) -> str:
     """将多个面板合成为一页漫画。
 
     Args:
@@ -360,7 +350,8 @@ def compose_page(panel_paths: list[str], layout: str = "grid", output_path: str 
     if output_path:
         page.save(output_path)
         return output_path
-    save_path = OUTPUT_DIR / f"agnes-comic-page-{int(time.time())}.png"
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-comic-page-{int(time.time())}.png"
     page.save(save_path)
     return str(save_path)
 
@@ -371,6 +362,7 @@ def create_comic(
     custom_prompt: str | None = None,
     panel_size: str = "1024x768",
     output: str | None = None,
+    project: str | None = None,
 ) -> str:
     """完整漫画创作流程：解析脚本 → 逐格生成 → 叠加对话框 → 合成页面。
 
@@ -380,6 +372,7 @@ def create_comic(
         custom_prompt: 自定义 prompt（覆盖预设）
         panel_size: 面板尺寸
         output: 输出路径（可选）
+        project: 项目名（可选），指定后使用项目隔离目录
 
     Returns:
         最终页面图片路径
@@ -387,6 +380,16 @@ def create_comic(
     script = parse_script(script_path)
     preset = preset or script.get("preset")
     layout = script.get("layout", "grid")
+
+    # 路径：项目 vs 默认
+    if project:
+        panels_dir = get_project_intermediate_dir(project, "panels")
+        bubbles_dir = get_project_intermediate_dir(project, "bubbles")
+        pages_dir = get_project_deliverable_dir(project, "comic_pages")
+    else:
+        panels_dir = OUTPUT_DIR
+        bubbles_dir = OUTPUT_DIR
+        pages_dir = OUTPUT_DIR
 
     panel_paths = []
     for i, panel in enumerate(script["panels"]):
@@ -397,15 +400,21 @@ def create_comic(
             preset=preset,
             custom_prompt=custom_prompt,
             size=panel_size,
+            output_dir=panels_dir,
         )
 
         # 叠加对话框
         if panel.get("speech"):
             speech_pos = panel.get("speech_position", "bottom")
-            panel_path = add_speech_bubble(panel_path, panel["speech"], position=speech_pos)
+            panel_path = add_speech_bubble(panel_path, panel["speech"], position=speech_pos, output_dir=bubbles_dir)
 
         panel_paths.append(panel_path)
 
     # 合成页面
     layout = script.get("layout", "grid")
-    return compose_page(panel_paths, layout=layout, output_path=output)
+    result = compose_page(panel_paths, layout=layout, output_path=output, output_dir=pages_dir)
+
+    if project:
+        cleanup_intermediates(project)
+
+    return result

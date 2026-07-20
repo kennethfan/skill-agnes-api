@@ -12,30 +12,24 @@
 
 import base64
 import json
-import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from utils import get_default_dir, get_api_key
 
 # --- 路径配置 ---
 
-if sys.platform == "win32":
-    CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "agnes"
-else:
-    CONFIG_DIR = Path.home() / ".config" / "agnes"
-
-KEY_PATH = CONFIG_DIR / "key"
+CONFIG_DIR = Path.home() / ".config" / "agnes"
 PRESETS_PATH = CONFIG_DIR / "refine-presets.yaml"
-OUTPUT_DIR = Path.home() / "agent" / "media" / "images"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = get_default_dir()
 
 API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 MODEL = "agnes-image-2.1-flash"
 
 
 def _get_key() -> str:
-    return (KEY_PATH).read_text(encoding="utf-8").strip()
+    return get_api_key()
 
 
 def _load_presets() -> dict:

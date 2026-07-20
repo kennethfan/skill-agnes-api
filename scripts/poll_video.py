@@ -4,26 +4,18 @@
 """
 
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
+from utils import get_default_dir, get_api_key
 
 VIDEO_ID = "video_YOUR_VIDEO_ID"
-OUTPUT_DIR = Path.home() / "agent" / "media" / "videos"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-if sys.platform == "win32":
-    key_dir = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "agnes"
-else:
-    key_dir = Path.home() / ".config" / "agnes"
-KEY = (key_dir / "key").read_text(encoding="utf-8").strip()
+OUTPUT_DIR = get_default_dir()
 
 while True:
     url = f"https://apihub.agnes-ai.com/agnesapi?{urlencode({'video_id': VIDEO_ID})}"
-    req = Request(url, headers={"Authorization": f"Bearer {KEY}"}, method="GET")
+    req = Request(url, headers={"Authorization": f"Bearer {get_api_key()}"}, method="GET")
     with urlopen(req) as resp:
         data = json.loads(resp.read())
 
