@@ -1,21 +1,13 @@
 """文生图 — Base64 输出 (不需要 URL 时)"""
 
 import json
-import os
-import sys
 import time
 import base64
 from pathlib import Path
 from urllib.request import Request, urlopen
+from utils import get_default_dir, get_api_key
 
-OUTPUT_DIR = Path.home() / "agent" / "media" / "images"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-if sys.platform == "win32":
-    key_dir = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "agnes"
-else:
-    key_dir = Path.home() / ".config" / "agnes"
-KEY = (key_dir / "key").read_text(encoding="utf-8").strip()
+OUTPUT_DIR = get_default_dir()
 
 body = {
     "model": "agnes-image-2.1-flash",
@@ -27,7 +19,7 @@ body = {
 req = Request(
     "https://apihub.agnes-ai.com/v1/images/generations",
     data=json.dumps(body).encode(),
-    headers={"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"},
+    headers={"Authorization": f"Bearer {get_api_key()}", "Content-Type": "application/json"},
     method="POST",
 )
 

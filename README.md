@@ -49,6 +49,38 @@ export AGNES_API_KEY="your-api-key"
 python3 scripts/check_key.py
 ```
 
+### 路径配置
+
+所有输出路径、工具路径由 `~/.config/agnes/paths.yaml` 统一管理。可配置项：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `base_dir` | 媒体根目录 | `~/agent/media` |
+| `default_dir` | 无项目兜底目录 | `tmp` |
+| `projects_dir` | 项目根目录 | `projects` |
+| `assets_dir` | 共享素材目录 | `assets` |
+| `ffmpeg_bin` | ffmpeg 路径 | `ffmpeg`（走 PATH） |
+| `ffprobe_bin` | ffprobe 路径 | `ffprobe`（走 PATH） |
+| `font_paths` | 中文字体路径列表（按序查找） | `[]`（自动回退） |
+| `cleanup.prompt` | 是否询问清理中间文件 | `true` |
+| `cleanup.default_yes` | 清理默认回答 | `true` |
+
+示例配置：
+
+```yaml
+# ~/.config/agnes/paths.yaml
+base_dir: ~/agent/media
+ffmpeg_bin: /opt/homebrew/bin/ffmpeg
+font_paths:
+  - /System/Library/Fonts/PingFang.ttc
+  - /System/Library/Fonts/STHeiti Light.ttc
+cleanup:
+  prompt: true
+  default_yes: true
+```
+
+不创建此文件时自动使用默认值，所有代码通过 `utils.py` 读取该配置，无需逐脚本修改。
+
 ---
 
 ## 目录结构
@@ -61,7 +93,8 @@ python3 scripts/check_key.py
 ├── CONTEXT.md                # 领域术语表
 ├── docs/adr/                 # 架构决策记录
 │   ├── 0001-image-refine-tool.md
-│   └── 0002-story-video-architecture.md
+│   ├── 0002-story-video-architecture.md
+│   └── 0003-file-organization.md
 ├── scripts/                  # 所有代码（扁平结构，无包）
 │   ├── utils.py              # 共享工具：API key、HTTP 辅助、输出目录
 │   ├── t2i.py                # 文生图（示例脚本，运行于 import）
@@ -71,10 +104,12 @@ python3 scripts/check_key.py
 │   ├── refine-cli.py         # CLI 封装
 │   ├── comic.py              # 核心 — 漫画生成
 │   ├── comic-cli.py          # CLI 封装
+│   ├── comic-page-layout.py  # 漫画拼页 + 对话框（独立工具）
 │   ├── poem_video.py         # 核心 — 诗词朗诵视频
 │   ├── poem-video-cli.py     # CLI 封装
 │   ├── story_video.py        # 核心 — 故事视频（扩展 poem_video）
 │   ├── story-video-cli.py    # CLI 封装
+│   ├── t2i_base64.py         # 文生图 — Base64 输出（示例脚本）
 │   ├── t2v.py                # 文生视频（示例脚本）
 │   ├── i2v.py                # 图生视频（示例脚本）
 │   ├── keyframes.py          # 关键帧动画（示例脚本）
@@ -88,12 +123,45 @@ python3 scripts/check_key.py
 
 ## 输出目录
 
+输出路径由 `~/.config/agnes/paths.yaml` 统一管理（详见下方路径配置）。脚本通过 `utils.py` 读取，不再硬编码。
+
+### 默认目录（无项目）
+
+零散生成的图片/视频存放在兜底目录：
+
 | 类型 | 路径 |
 |------|------|
-| 图片 | `~/agent/media/images/` |
-| 视频 | `~/agent/media/videos/` |
+| 默认 | `~/agent/media/tmp/` |
 
 文件名格式：`agnes-<类型>-<时间戳>.<扩展名>`
+
+### 项目隔离目录（推荐）
+
+使用 `--project` / `project=` 参数时，文件按角色分层存放：
+
+```
+~/agent/media/
+├── assets/                          ← 跨项目共享输入素材
+└── projects/
+    └── <project-name>/
+        ├── <project-name>.yaml      ← 剧本
+        ├── scenes/                  ← Intermediate: t2i 场景原图
+        ├── panels/                  ← Intermediate: 漫画逐格
+        ├── bubbles/                 ← Intermediate: 气泡图层
+        ├── frames/                  ← Intermediate: 视频帧
+        ├── audio/                   ← Intermediate: TTS 音频段
+        └── deliverable/
+            ├── comic-pages/         ← Deliverable: 拼页 PNG
+            └── videos/              ← Deliverable: 最终 MP4
+```
+
+| 角色 | 生命周期 | 说明 |
+|------|---------|------|
+| **Asset** | 保留 | 不可再生的输入素材（角色参考图、背景图） |
+| **Intermediate** | 可删除 | Pipeline 临时产物，完成后询问用户是否清理 |
+| **Deliverable** | 保留 | 最终交付物（拼页 PNG、视频 MP4） |
+
+Pipeline 完成时会主动询问「是否删除中间文件？」（默认 yes），一键清理。也可通过 `utils.cleanup_intermediates()` 手动调用。
 
 ---
 
@@ -149,6 +217,9 @@ python3 scripts/story-video-cli.py --title "三只小猪" --style ink-wash
 
 # 从文本文件生成
 python3 scripts/story-video-cli.py --textfile my-story.txt
+
+# 使用项目目录隔离中间文件
+python3 scripts/story-video-cli.py --title "三只小猪" --project 三只小猪
 ```
 
 ### 视频生成（异步）
@@ -179,6 +250,10 @@ python3 scripts/poll_video.py <task_id>
 | `1:1` | 1024×1024 | 2048×2048 | 3072×3072 | 4096×4096 |
 | `16:9` | 1312×736 | 2624×1472 | 3936×2208 | 5248×2944 |
 | `9:16` | 736×1312 | 1472×2624 | 2208×3936 | 2944×5248 |
+| `3:4` | 864×1152 | 1728×2304 | 2592×3456 | 3456×4608 |
+| `4:3` | 1152×864 | 2304×1728 | 3456×2592 | 4608×3456 |
+
+也支持传统精确尺寸如 `1024x768`。
 
 ### 视频参数
 
@@ -186,6 +261,9 @@ python3 scripts/poll_video.py <task_id>
 |------|------|
 | `num_frames` | 总帧数，≤ 441，必须满足 `8n + 1` |
 | `frame_rate` | 帧率，1-60 |
+| `height` / `width` | 会被归一化到 480p/720p/1080p 档位 |
+| `seed` | 固定随机种子，可复现结果 |
+| `negative_prompt` | 负面提示词 |
 | 时长参考 | ~3s (81帧/24fps) / ~5s (121帧/24fps) / ~10s (241帧/24fps) / ~18s (441帧/24fps) |
 
 ---
@@ -203,13 +281,16 @@ path = refine("photo.jpg", "变成宫崎骏风格")
 from scripts.comic import create_comic
 path = create_comic("my-comic.yaml", preset="manga")
 
-# 诗词视频
+# 诗词视频（默认目录）
 from scripts.poem_video import create_poem_video
 path = create_poem_video("my-poem.yaml")
 
-# 故事视频
+# 诗词视频（项目隔离 — 推荐）
+path = create_poem_video("my-poem.yaml", project="静夜思")
+
+# 故事视频（项目隔离 — 推荐）
 from scripts.story_video import create_story_video
-path = create_story_video("my-story.yaml")
+path = create_story_video("my-story.yaml", project="三只小猪")
 ```
 
 ### YAML 脚本格式
@@ -288,6 +369,7 @@ scenes:
 
 - [ADR 0001: 基于 AGNES i2i 的图片精修工具](docs/adr/0001-image-refine-tool.md)
 - [ADR 0002: 故事视频架构](docs/adr/0002-story-video-architecture.md)
+- [ADR 0003: 文件组织 — 角色隔离的项目布局](docs/adr/0003-file-organization.md)
 
 ---
 

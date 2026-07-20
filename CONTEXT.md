@@ -31,6 +31,18 @@
 |---|---|
 | **预设风格** | 预定义的艺术风格模板，存储在 YAML 配置文件中，可通过文本描述驱动 i2i 生成 |
 | **精修操作** | 对图片执行的一次变换，包括画质增强、局部修改、风格迁移三类 |
+| **路径配置** | `~/.config/agnes/paths.yaml` — 所有输出路径的唯一信源，脚本通过 `utils.py` 读取 |
+
+## 文件组织
+
+| 术语 | 定义 |
+|---|---|
+| **Asset** | Pipeline 的输入素材（角色参考图、背景图），不可再生，保留 |
+| **Intermediate** | Pipeline 生成的临时文件（场景图、逐格、气泡、视频帧、音频段），可以安全删除，完成后询问用户 |
+| **Deliverable** | Pipeline 的最终交付物（拼页 PNG、视频 MP4），保留 |
+| **Project** | 文件组织的一级单位。每个项目一个独立目录 `~/agent/media/projects/<name>/`，包含自己的剧本、intermediates 子目录和 deliverable 子目录 |
+| **Cleanup Prompt** | Pipeline 完成后询问用户是否删除 intermediates 目录，默认 yes |
+| **Default Dir** | `~/agent/media/tmp/` — 无项目归属的零散生成文件兜底目录 |
 
 ## 故事视频
 

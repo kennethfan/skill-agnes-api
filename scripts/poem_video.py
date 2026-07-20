@@ -24,25 +24,19 @@ import time as _time
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from utils import get_default_dir, get_project_intermediate_dir, get_project_deliverable_dir, cleanup_intermediates, get_ffmpeg_bin, get_ffprobe_bin, get_font_path
 
 # --- 路径配置 ---
 
-if sys.platform == "win32":
-    CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "agnes"
-else:
-    CONFIG_DIR = Path.home() / ".config" / "agnes"
-
-KEY_PATH = CONFIG_DIR / "key"
-OUTPUT_DIR = Path.home() / "agent" / "media" / "videos"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR = get_default_dir()
+CONFIG_DIR = Path.home() / ".config" / "agnes"
 
 API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 MODEL = "agnes-image-2.1-flash"
 
-# 完整版 ffmpeg（支持 drawtext、libfontconfig）
-_FFMPEG_BIN = "/Users/kenneth/anaconda3/envs/python3.12/lib/python3.12/site-packages/portable_ffmpeg/binaries/osx-amd64-latest"
-FFMPEG = _FFMPEG_BIN + "/ffmpeg"
-FFPROBE = _FFMPEG_BIN + "/ffprobe"
+# 完整版 ffmpeg（从 paths.yaml 读取，支持 drawtext、libfontconfig）
+FFMPEG = get_ffmpeg_bin()
+FFPROBE = get_ffprobe_bin()
 
 # 默认童声
 DEFAULT_VOICE = "zh-CN-YunxiaNeural"
@@ -55,7 +49,8 @@ SCENE_H = 1312
 
 
 def _get_key() -> str:
-    return (KEY_PATH).read_text(encoding="utf-8").strip()
+    from utils import get_api_key
+    return get_api_key()
 
 
 def _resolve_image(image: str) -> str:
@@ -113,8 +108,14 @@ def _auto_fit_subtitle(text: str, font_path: str, max_width: int = 660, font_max
     return _wrap_text(text, 10), font_min
 
 
-def _t2i(prompt: str, size: str = "736x1312") -> str:
-    """文生图，返回保存的文件路径（带重试）"""
+def _t2i(prompt: str, size: str = "736x1312", output_dir: Path | None = None) -> str:
+    """文生图，返回保存的文件路径（带重试）
+
+    Args:
+        prompt: 图像描述
+        size: 输出尺寸
+        output_dir: 保存目录，默认使用 OUTPUT_DIR
+    """
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -129,7 +130,8 @@ def _t2i(prompt: str, size: str = "736x1312") -> str:
                 data = json.loads(resp.read())
             image_url = data["data"][0]["url"]
             timestamp = int(_time.time())
-            save_path = OUTPUT_DIR / f"agnes-poem-scene-{timestamp}.png"
+            save_dir = output_dir or OUTPUT_DIR
+            save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
             with urlopen(image_url) as img_resp:
                 save_path.write_bytes(img_resp.read())
             return str(save_path)
@@ -142,8 +144,12 @@ def _t2i(prompt: str, size: str = "736x1312") -> str:
                 raise
 
 
-def _i2i(image: str, prompt: str, size: str = "736x1312") -> str:
-    """图生图，返回保存的文件路径（带重试）"""
+def _i2i(image: str, prompt: str, size: str = "736x1312", output_dir: Path | None = None) -> str:
+    """图生图，返回保存的文件路径（带重试）
+
+    Args:
+        output_dir: 保存目录，默认使用 OUTPUT_DIR
+    """
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -167,7 +173,8 @@ def _i2i(image: str, prompt: str, size: str = "736x1312") -> str:
                 data = json.loads(resp.read())
             image_url = data["data"][0]["url"]
             timestamp = int(_time.time())
-            save_path = OUTPUT_DIR / f"agnes-poem-scene-{timestamp}.png"
+            save_dir = output_dir or OUTPUT_DIR
+            save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
             with urlopen(image_url) as img_resp:
                 save_path.write_bytes(img_resp.read())
             return str(save_path)
@@ -199,8 +206,12 @@ def _generate_audio(text: str, voice: str, output_path: str) -> float:
     return float(duration.stdout.strip())
 
 
-def _create_title_card(title: str, author: str, bg_image: str | None = None) -> str:
-    """创建片头图：诗名 + 作者，水墨背景"""
+def _create_title_card(title: str, author: str, bg_image: str | None = None, output_dir: Path | None = None) -> str:
+    """创建片头图：诗名 + 作者，水墨背景
+
+    Args:
+        output_dir: 保存目录，默认使用 OUTPUT_DIR
+    """
     from PIL import Image, ImageDraw, ImageFont
 
     if bg_image:
@@ -210,21 +221,16 @@ def _create_title_card(title: str, author: str, bg_image: str | None = None) -> 
 
     draw = ImageDraw.Draw(bg)
 
-    # 加载中文字体
+    # 加载中文字体（从 paths.yaml 读取）
     font_title = None
     font_author = None
-    font_candidates = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-    ]
-    for fp in font_candidates:
-        if Path(fp).exists():
-            try:
-                font_title = ImageFont.truetype(fp, 64)
-                font_author = ImageFont.truetype(fp, 36)
-                break
-            except Exception:
-                continue
+    font_path = get_font_path()
+    if font_path:
+        try:
+            font_title = ImageFont.truetype(font_path, 64)
+            font_author = ImageFont.truetype(font_path, 36)
+        except Exception:
+            pass
     if font_title is None:
         font_title = ImageFont.load_default()
         font_author = ImageFont.load_default()
@@ -243,16 +249,18 @@ def _create_title_card(title: str, author: str, bg_image: str | None = None) -> 
     ay = ty + 100
     draw.text((ax, ay), author, fill=(80, 75, 70), font=font_author)
 
-    save_path = OUTPUT_DIR / f"agnes-poem-title-{int(_time.time())}.png"
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-poem-title-{int(_time.time())}.png"
     bg.save(save_path)
     return str(save_path)
 
 
-def _create_scene_frame(scene_image_path: str) -> str:
+def _create_scene_frame(scene_image_path: str, output_dir: Path | None = None) -> str:
     """将场景图缩放到视频尺寸（字幕由 ffmpeg drawtext 叠加）"""
     from PIL import Image
     scene = Image.open(scene_image_path).resize((FRAME_W, FRAME_H), Image.LANCZOS)
-    save_path = OUTPUT_DIR / f"agnes-poem-frame-{int(_time.time())}.png"
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-poem-frame-{int(_time.time())}.png"
     scene.save(save_path)
     return str(save_path)
 
@@ -285,6 +293,7 @@ def create_poem_video(
     script_path: str,
     voice: str = DEFAULT_VOICE,
     output: str | None = None,
+    project: str | None = None,
 ) -> str:
     """完整诗词朗诵视频生成流程。
 
@@ -292,6 +301,7 @@ def create_poem_video(
         script_path: YAML 脚本路径
         voice: edge-tts 语音
         output: 输出视频路径（可选）
+        project: 项目名（可选），指定后使用项目隔离目录
 
     Returns:
         视频文件路径
@@ -304,20 +314,32 @@ def create_poem_video(
     author = script.get("author", "")
     lines = script["lines"]
 
+    # 路径：项目 vs 默认
+    if project:
+        scenes_dir = get_project_intermediate_dir(project, "scenes")
+        frames_dir = get_project_intermediate_dir(project, "frames")
+        video_dir = get_project_deliverable_dir(project, "videos")
+    else:
+        scenes_dir = OUTPUT_DIR
+        frames_dir = OUTPUT_DIR
+        video_dir = OUTPUT_DIR
+
     print(f"Generating poem video: {title} — {author}")
     print(f"  Lines: {len(lines)}, Voice: {voice}")
+    if project:
+        print(f"  Project: {project}")
 
-    # ─── Step 1: 生成场景图（t2i，每句独立生成 — 角色由 prompt 中的 "little scholar in ancient Chinese clothing" 保证一致） ───
+    # ─── Step 1: 生成场景图（t2i，每句独立生成） ───
     scene_paths = []
     for i, line in enumerate(lines, start=1):
         print(f"\n[1/6] Generating scene {i} (t2i)...")
-        scene = _t2i(line["description"])
+        scene = _t2i(line["description"], output_dir=scenes_dir)
         scene_paths.append(scene)
         print(f"  Saved: {scene}")
 
     # ─── Step 2: 生成标题卡 ───
     print(f"\n[2/5] Creating title card...")
-    title_card = _create_title_card(title, author, bg_image=scene_paths[0])
+    title_card = _create_title_card(title, author, bg_image=scene_paths[0], output_dir=frames_dir)
     print(f"  Saved: {title_card}")
 
     # ─── Step 3: 生成音频 ───
@@ -345,7 +367,7 @@ def create_poem_video(
     print(f"\n[4/5] Preparing scene frames...")
     frame_paths = [title_card]
     for i, line in enumerate(lines):
-        frame = _create_scene_frame(scene_paths[i])
+        frame = _create_scene_frame(scene_paths[i], output_dir=frames_dir)
         frame_paths.append(frame)
         print(f"  Frame {i+1} saved")
 
@@ -358,12 +380,8 @@ def create_poem_video(
         input_args.extend(["-loop", "1", "-t", str(durations[i]), "-i", frame_paths[i]])
         input_args.extend(["-i", audio_paths[i]])
 
-    # 查找中文字体路径（给 drawtext 用）
-    font_path = None
-    for fp in ["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Light.ttc"]:
-        if Path(fp).exists():
-            font_path = fp
-            break
+    # 从 paths.yaml 读取中文字体路径（给 drawtext 用）
+    font_path = get_font_path()
 
     # 构建 filter_complex 字符串（含 drawtext 字幕叠加）
     filter_parts = []
@@ -387,7 +405,7 @@ def create_poem_video(
     filter_complex = "; ".join(filter_parts)
     filter_complex += f"; {concat_input}concat=n={len(frame_paths)}:v=1:a=1[outv][outa]"
 
-    output_path = output or str(OUTPUT_DIR / f"agnes-poem-{int(_time.time())}.mp4")
+    output_path = output or str(video_dir / f"agnes-poem-{int(_time.time())}.mp4")
     cmd = [
         FFMPEG, "-y",
         *input_args,
@@ -401,6 +419,10 @@ def create_poem_video(
 
     # 清理临时文件
     shutil.rmtree(temp_dir)
+
+    # 项目模式：询问清理中间产物
+    if project:
+        cleanup_intermediates(project)
 
     print(f"\nVideo saved to: {output_path}")
     return output_path
