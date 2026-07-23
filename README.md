@@ -17,7 +17,7 @@
 - **图片精修** — 基于 I2I 的画质增强、风格迁移、局部修改，支持预设风格
 - **漫画创作** — 从 YAML 脚本逐格生成漫画，支持对话框叠加、多布局拼页
 - **诗词朗诵视频** — 诗词 → AGNES 场景图 + edge-tts 朗诵音频 + ffmpeg 合成，水墨国风竖屏
-- **故事动画视频** — 面向 3-6 岁儿童的多角色配音故事动画，角色外观一致性保持
+- **故事动画视频** — 面向 3-6 岁儿童的多角色配音故事动画，角色外观一致性保持，支持 checkpoint 断点续传
 - **视频生成** — 文生视频 (T2V)、图生视频 (I2V)、关键帧动画，异步轮询
 - **纯 Python 标准库** — 仅依赖 `urllib`，无 `requests` 库
 
@@ -209,18 +209,20 @@ python3 scripts/poem-video-cli.py --script my-poem.yaml --voice zh-CN-YunxiaNeur
 ### 故事动画视频
 
 ```bash
-# 搜索故事 → 全自动生成
-python3 scripts/story-video-cli.py --title "三只小猪"
+# 从 YAML 脚本生成（推荐）
+python3 scripts/story-video-cli.py --script my-story.yaml
 
 # 指定视觉风格
-python3 scripts/story-video-cli.py --title "三只小猪" --style ink-wash
+python3 scripts/story-video-cli.py --script my-story.yaml --style ink-wash
 
-# 从文本文件生成
-python3 scripts/story-video-cli.py --textfile my-story.txt
+# 指定输出路径
+python3 scripts/story-video-cli.py --script my-story.yaml -o my-story.mp4
 
-# 使用项目目录隔离中间文件
-python3 scripts/story-video-cli.py --title "三只小猪" --project 三只小猪
+# 使用项目目录隔离中间文件（支持 checkpoint 断点续传）
+python3 scripts/story-video-cli.py --script my-story.yaml --project 三只小猪
 ```
+
+> ⚠️ `--title` 搜索模式和 `--textfile` 文本直出模式暂未实现，当前仅支持 `--script` 模式。需在外部准备 YAML 脚本后传入。
 
 ### 视频生成（异步）
 
@@ -312,6 +314,9 @@ lines:
 title: "三只小猪"
 source: "经典童话"
 style: "american"
+characters:                          # 可选，手工覆盖角色语音
+  小猪大哥: "zh-CN-YunxiNeural"
+  大灰狼: "zh-CN-YunjianNeural"
 scenes:
   - description: "Three little piglets saying goodbye to their mother..."
     dialogues:
@@ -321,6 +326,8 @@ scenes:
         text: "小猪小猪，让我进来！"
         voice: "zh-CN-YunjianNeural"   # 可选，覆盖自动映射
 ```
+
+> `characters` 块可在顶层手工覆盖任意角色的 edge-tts 语音，优先级高于自动映射。每条 dialogue 内的 `voice` 进一步覆盖角色级设置。
 
 ---
 
@@ -345,11 +352,11 @@ scenes:
 
 | 角色倾向 | 自动分配语音 | 示例角色 |
 |----------|-------------|---------|
-| 旁白/叙述 | `zh-CN-YunxiaNeural` 童声 | 旁白 |
-| 成年男性 | `zh-CN-YunjianNeural` 低沉 | 大灰狼、爸爸、猎人 |
-| 成年女性 | `zh-CN-XiaoxiaoNeural` 温柔 | 妈妈、奶奶 |
-| 小动物/幼儿 | `zh-CN-YunxiNeural` 活泼 | 小猪、小兔、小鸡 |
-| 活泼女童 | `zh-CN-XiaoyiNeural` 明亮 | 小红帽、姐姐 |
+| 旁白/叙述 | `zh-CN-YunxiaNeural` 童声 | 旁白、叙述 |
+| 成年男性（低沉） | `zh-CN-YunjianNeural` 低沉 | 大灰狼、灰狼、狼、狐狸、老虎、爸爸、猎人 |
+| 成年女性（温柔） | `zh-CN-XiaoxiaoNeural` 温柔 | 妈妈、奶奶、外婆 |
+| 小动物/幼儿（活泼） | `zh-CN-YunxiNeural` 活泼 | 小猪、小兔、小羊、小鸡、小鸭 |
+| 活泼女童（明亮） | `zh-CN-XiaoyiNeural` 明亮 | 小红帽、姐姐、公主 |
 
 ---
 
