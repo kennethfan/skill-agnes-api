@@ -68,6 +68,7 @@ class ImageClient(AgnesClient):
         prompt: str,
         size: str = "1024x768",
         ratio: str | None = None,
+        seed: int | None = None,
         **body_extras,
     ) -> str:
         """文生图，返回 image_url。
@@ -76,11 +77,14 @@ class ImageClient(AgnesClient):
             prompt: 图像描述
             size: 输出尺寸（如 1024x768、2K）
             ratio: 宽高比（如 16:9、1:1）
+            seed: 随机种子（相同 seed 复现结果）
             **body_extras: 额外 body 字段（如 extra_body、return_base64）
         """
         body: dict = {"model": self.MODEL, "prompt": prompt, "size": size, **body_extras}
         if ratio:
             body["ratio"] = ratio
+        if seed is not None:
+            body["seed"] = seed
         data = self.post(self.API_PATH, body)
         return data["data"][0]["url"]
 
@@ -90,6 +94,7 @@ class ImageClient(AgnesClient):
         prompt: str,
         size: str = "1024x768",
         ratio: str | None = None,
+        seed: int | None = None,
         **body_extras,
     ) -> str:
         """图生图，返回 image_url。
@@ -99,6 +104,7 @@ class ImageClient(AgnesClient):
             prompt: 图像描述
             size: 输出尺寸
             ratio: 宽高比
+            seed: 随机种子（相同 seed 复现结果）
             **body_extras: 额外 body 字段
         """
         image_ref = self._resolve_image(image)
@@ -114,6 +120,8 @@ class ImageClient(AgnesClient):
         }
         if ratio:
             body["ratio"] = ratio
+        if seed is not None:
+            body["seed"] = seed
         data = self.post(self.API_PATH, body)
         return data["data"][0]["url"]
 

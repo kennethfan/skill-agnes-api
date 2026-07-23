@@ -37,10 +37,10 @@ def list_presets() -> list[dict]:
     return [{"key": k, "name": v["name"], "prompt": v["prompt"]} for k, v in presets.items()]
 
 
-def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None, output_dir: Path | None = None) -> str:
+def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None, output_dir: Path | None = None, seed: int | None = None) -> str:
     """文生图，返回保存的文件路径。委托给 ImageClient。"""
     client = ImageClient()
-    image_url = client.t2i(prompt, size=size, ratio=ratio)
+    image_url = client.t2i(prompt, size=size, ratio=ratio, seed=seed)
     timestamp = int(time.time())
     save_dir = output_dir or OUTPUT_DIR
     save_path = save_dir / f"agnes-comic-panel-{timestamp}.png"
@@ -48,10 +48,10 @@ def _t2i(prompt: str, size: str = "1024x768", ratio: str | None = None, output_d
     return str(save_path)
 
 
-def _i2i(image: str, prompt: str, size: str = "1024x768", ratio: str | None = None, output_dir: Path | None = None) -> str:
+def _i2i(image: str, prompt: str, size: str = "1024x768", ratio: str | None = None, output_dir: Path | None = None, seed: int | None = None) -> str:
     """图生图，返回保存的文件路径。委托给 ImageClient。"""
     client = ImageClient()
-    image_url = client.i2i(image, prompt, size=size, ratio=ratio)
+    image_url = client.i2i(image, prompt, size=size, ratio=ratio, seed=seed)
     timestamp = int(time.time())
     save_dir = output_dir or OUTPUT_DIR
     save_path = save_dir / f"agnes-comic-panel-{timestamp}.png"
@@ -95,6 +95,7 @@ def generate_panel(
     custom_prompt: str | None = None,
     size: str = "1024x768",
     output_dir: Path | None = None,
+    seed: int | None = None,
 ) -> str:
     """生成单个漫画面板。
 
@@ -104,6 +105,7 @@ def generate_panel(
         preset: 风格预设 key
         custom_prompt: 自定义 prompt（覆盖预设）
         size: 输出尺寸
+        seed: 随机种子（相同 seed 复现结果）
 
     Returns:
         面板图片路径
@@ -118,9 +120,9 @@ def generate_panel(
         prompt = description
 
     if character_ref:
-        return _i2i(character_ref, prompt, size=size, output_dir=output_dir)
+        return _i2i(character_ref, prompt, size=size, output_dir=output_dir, seed=seed)
     else:
-        return _t2i(prompt, size=size, output_dir=output_dir)
+        return _t2i(prompt, size=size, output_dir=output_dir, seed=seed)
 
 
 # ─── 对话框叠加 ───────────────────────────────────────────────
