@@ -91,15 +91,16 @@ When this file doesn't exist, defaults apply automatically.
 ├── AGENTS.md                 # Agent knowledge base
 ├── SKILL.md                  # Skill definition (agent entry point)
 ├── CONTEXT.md                # Domain glossary
-├── docs/adr/                 # Architecture Decision Records
-│   ├── 0001-image-refine-tool.md
-│   ├── 0002-story-video-architecture.md
-│   └── 0003-file-organization.md
+├── docs/
+│   ├── adr/                  # Architecture Decision Records (0001‑0005)
+│   └── pipelines/            # Pipeline docs (poem / story / today-in-history)
 ├── scripts/                  # All code (flat structure, no package)
-│   ├── utils.py              # Shared utilities: API key, HTTP helpers, output dirs
+│   ├── utils.py              # Shared utilities: API key, HTTP helpers, output dirs, KeyPool
+│   ├── client.py             # Unified client: AgnesClient / ImageClient / VideoClient
 │   ├── t2i.py                # Text-to-Image (example, runs on import)
 │   ├── i2i.py                # Image-to-Image (example, runs on import)
 │   ├── compose.py            # Multi-image composition (example)
+│   ├── t2i_base64.py         # Text-to-Image — Base64 output (example)
 │   ├── refine.py             # Core — image refinement
 │   ├── refine-cli.py         # CLI wrapper
 │   ├── comic.py              # Core — comic generation
@@ -109,12 +110,18 @@ When this file doesn't exist, defaults apply automatically.
 │   ├── poem-video-cli.py     # CLI wrapper
 │   ├── story_video.py        # Core — story video (extends poem_video)
 │   ├── story-video-cli.py    # CLI wrapper
-│   ├── t2i_base64.py         # Text-to-Image — Base64 output (example)
 │   ├── t2v.py                # Text-to-Video (example)
 │   ├── i2v.py                # Image-to-Video (example)
 │   ├── keyframes.py          # Keyframe animation (example)
 │   ├── poll_video.py         # Poll video result
-│   └── query_video.py        # Query task status
+│   ├── query_video.py        # Query task status
+│   ├── check_key.py          # Verify API key
+│   └── pipelines/            # Composite pipeline scripts (checkpoint-based)
+│       ├── poem-pipeline.py
+│       ├── story-pipeline.py
+│       └── today-in-history-pipeline.py
+├── .omo/
+│   └── run-continuation/     # OpenCode run continuation state
 ├── LICENSE                   # Apache 2.0
 └── .gitignore
 ```
@@ -233,6 +240,21 @@ python3 scripts/t2v.py
 # Poll result
 python3 scripts/poll_video.py <task_id>
 ```
+
+### Composite Pipelines
+
+```bash
+# Full poem workflow (generate images → TTS → compose video)
+python3 scripts/pipelines/poem-pipeline.py
+
+# Full story workflow (multi-character TTS + scene gen + frame composition)
+python3 scripts/pipelines/story-pipeline.py
+
+# Today-in-history video (search events → generate video)
+python3 scripts/pipelines/today-in-history-pipeline.py
+```
+
+> See [`docs/pipelines/`](docs/pipelines/) for detailed pipeline documentation.
 
 ---
 
@@ -377,6 +399,8 @@ Automatic edge-tts voice assignment for story characters (overridable in YAML):
 - [ADR 0001: Image Refinement Tool Based on AGNES I2I](docs/adr/0001-image-refine-tool.md)
 - [ADR 0002: Story Video Architecture](docs/adr/0002-story-video-architecture.md)
 - [ADR 0003: File Organization — Role-Isolated Project Layout](docs/adr/0003-file-organization.md)
+- [ADR 0004: Runtime Dependency Paths](docs/adr/0004-runtime-dependency-paths.md)
+- [ADR 0005: Consolidate Under agnes-api Skill](docs/adr/0005-consolidate-skills-under-agnes-api.md)
 
 ---
 

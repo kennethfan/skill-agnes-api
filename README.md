@@ -91,15 +91,16 @@ cleanup:
 ├── AGENTS.md                 # Agent 知识库
 ├── SKILL.md                  # Skill 定义（agent 入口）
 ├── CONTEXT.md                # 领域术语表
-├── docs/adr/                 # 架构决策记录
-│   ├── 0001-image-refine-tool.md
-│   ├── 0002-story-video-architecture.md
-│   └── 0003-file-organization.md
+├── docs/
+│   ├── adr/                  # 架构决策记录（0001‑0005）
+│   └── pipelines/            # 管线文档（poem / story / today-in-history）
 ├── scripts/                  # 所有代码（扁平结构，无包）
-│   ├── utils.py              # 共享工具：API key、HTTP 辅助、输出目录
+│   ├── utils.py              # 共享工具：API key、HTTP 辅助、输出目录、KeyPool
+│   ├── client.py             # 统一客户端：AgnesClient / ImageClient / VideoClient
 │   ├── t2i.py                # 文生图（示例脚本，运行于 import）
 │   ├── i2i.py                # 图生图（示例脚本，运行于 import）
 │   ├── compose.py            # 多图合成（示例脚本）
+│   ├── t2i_base64.py         # 文生图 — Base64 输出（示例脚本）
 │   ├── refine.py             # 核心 — 图片精修
 │   ├── refine-cli.py         # CLI 封装
 │   ├── comic.py              # 核心 — 漫画生成
@@ -109,12 +110,18 @@ cleanup:
 │   ├── poem-video-cli.py     # CLI 封装
 │   ├── story_video.py        # 核心 — 故事视频（扩展 poem_video）
 │   ├── story-video-cli.py    # CLI 封装
-│   ├── t2i_base64.py         # 文生图 — Base64 输出（示例脚本）
 │   ├── t2v.py                # 文生视频（示例脚本）
 │   ├── i2v.py                # 图生视频（示例脚本）
 │   ├── keyframes.py          # 关键帧动画（示例脚本）
 │   ├── poll_video.py         # 轮询视频结果
-│   └── query_video.py        # 查询任务状态
+│   ├── query_video.py        # 查询任务状态
+│   ├── check_key.py          # 验证 API Key
+│   └── pipelines/            # 复合管线脚本（checkpoint 断点续传）
+│       ├── poem-pipeline.py
+│       ├── story-pipeline.py
+│       └── today-in-history-pipeline.py
+├── .omo/
+│   └── run-continuation/     # OpenCode 运行续接状态
 ├── LICENSE                   # Apache 2.0
 └── .gitignore
 ```
@@ -233,6 +240,21 @@ python3 scripts/t2v.py
 # 轮询结果
 python3 scripts/poll_video.py <task_id>
 ```
+
+### 复合管线
+
+```bash
+# 诗词全流程（生成图片 → TTS → 合成视频）
+python3 scripts/pipelines/poem-pipeline.py
+
+# 故事动画全流程（多角色配音 + 场景生成 + 逐帧合成）
+python3 scripts/pipelines/story-pipeline.py
+
+# 历史上的今天视频（搜索当日事件 → 生成视频）
+python3 scripts/pipelines/today-in-history-pipeline.py
+```
+
+> 详细管线流程文档见 [`docs/pipelines/`](docs/pipelines/)。
 
 ---
 
@@ -377,6 +399,8 @@ scenes:
 - [ADR 0001: 基于 AGNES i2i 的图片精修工具](docs/adr/0001-image-refine-tool.md)
 - [ADR 0002: 故事视频架构](docs/adr/0002-story-video-architecture.md)
 - [ADR 0003: 文件组织 — 角色隔离的项目布局](docs/adr/0003-file-organization.md)
+- [ADR 0004: 运行时依赖路径](docs/adr/0004-runtime-dependency-paths.md)
+- [ADR 0005: 统一到 agnes-api skill 下](docs/adr/0005-consolidate-skills-under-agnes-api.md)
 
 ---
 
