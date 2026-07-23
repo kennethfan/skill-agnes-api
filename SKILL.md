@@ -97,6 +97,12 @@ python3 refine-cli.py --input photo.jpg --preset ghibli
 
 # 自定义 prompt
 python3 refine-cli.py --input photo.jpg --custom-prompt "Make it vintage"
+
+# 指定尺寸和宽高比
+python3 refine-cli.py --input photo.jpg --preset cyberpunk --size 2K --ratio 16:9
+
+# 输入为 URL
+python3 refine-cli.py --input https://example.com/photo.jpg --operation "调亮+锐化"
 ```
 
 **预设风格配置**: `~/.config/agnes/refine-presets.yaml`
@@ -107,9 +113,9 @@ python3 refine-cli.py --input photo.jpg --custom-prompt "Make it vintage"
 
 | 脚本 | 用途 |
 |---|---|
-| `@scripts/comic.py` | 核心漫画生成函数（AI 驱动模式，被 agent 调用） |
+| `@scripts/comic.py` | 核心漫画生成函数（AI 驱动模式，被 agent 调用），支持 `project` 参数进行项目隔离目录管理 |
 | `@scripts/comic-cli.py` | CLI 工具模式 |
-| `@scripts/comic-page-layout.py` | 漫画拼页工具 — 在已有场景图上叠加对话框并排布为 2×2 网格页面 |
+| `@scripts/comic-page-layout.py` | （历史上的今天专用）独立管线 — 读取 `today-in-history-comic.yaml`，查找最新 `comic-scene-NN` 图片，叠加对话框并排布为 2×2 网格页面 |
 
 **CLI 用法**:
 ```
@@ -124,6 +130,12 @@ python3 comic-cli.py --script my-comic.yaml --preset manga
 
 # 自定义 prompt 覆盖
 python3 comic-cli.py --script my-comic.yaml --custom-prompt "vibrant colors"
+
+# 指定面板尺寸
+python3 comic-cli.py --script my-comic.yaml --panel-size 1024x768
+
+# 指定输出路径
+python3 comic-cli.py --script my-comic.yaml --output my-comic.png
 ```
 
 **预设风格**: `~/.config/agnes/comic-presets.yaml`
@@ -157,7 +169,7 @@ layout: hero  # grid | hero
 
 | 脚本 | 用途 |
 |---|---|
-| `@scripts/poem_video.py` | 核心视频生成函数（AI 驱动模式，被 agent 调用） |
+| `@scripts/poem_video.py` | 核心视频生成函数（AI 驱动模式，被 agent 调用），支持 `project` 参数进行项目隔离目录管理 |
 | `@scripts/poem-video-cli.py` | CLI 工具模式 |
 
 **CLI 用法**:
@@ -194,9 +206,10 @@ python3 poem-video-cli.py --list-voices
 | 场景生成尺寸 | 736×1312 (AGNES 1K 9:16) |
 | 字幕位置 | `(w-text_w)/2` 水平居中，`h-text_h-60` 距底部（随字号自适应） |
 | 字幕字体 | PingFang.ttc / STHeiti Light.ttc |
-| 字幕样式 | 42px 白色 + 2px 半透明阴影 |
+| 字幕样式 | 28-42px 自适应（`_auto_fit_subtitle`），白色 + 2px 半透明阴影 |
 | 语音 | edge-tts —rate=-30% 慢速朗诵 |
 | 默认语音 | zh-CN-YunxiaNeural 童声 |
+| 项目模式 | 可选 `project` 参数，启用项目隔离目录（intermediates / deliverables） |
 
 **YAML 脚本格式示例** (`my-poem.yaml`):
 ```yaml
@@ -222,26 +235,25 @@ lines:
 
 | 脚本 | 用途 |
 |---|---|
-| `@scripts/story_video.py` | 故事文本 → YAML → 视频渲染（复用 `poem_video` 的 t2i/i2i/edge-tts/ffmpeg 函数） |
+| `@scripts/story_video.py` | 故事文本 → YAML → 视频渲染（复用 `poem_video` 函数），支持 `project` 参数 + checkpoint 断点续传 |
 | `@scripts/story-video-cli.py` | CLI 入口 |
 
 **CLI 用法**:
 ```
-# 从 YAML 脚本生成故事视频
+# 从 YAML 脚本生成故事视频（推荐）
 python3 story-video-cli.py --script my-story.yaml
 
 # 指定视觉风格
 python3 story-video-cli.py --script my-story.yaml --style ink-wash
 
-# 从文本文件生成（跳过搜索）
-python3 story-video-cli.py --textfile my-story.txt --style american
-
 # 指定输出路径
 python3 story-video-cli.py --script my-story.yaml -o my-story.mp4
 ```
 
+> ⚠️ `--title` 搜索模式和 `--textfile` 文本直出模式暂未实现，当前仅支持 `--script` 模式。需在外部准备 YAML 脚本后传入。
+
 **依赖**:
-- `edge-tts`（多角色语音，自动 `--rate=-30%` 慢速）
+- `edge-tts`（多角色语音，自动 `--rate=-30%` 慢速，带 3 次重试 + 指数退避应对微软 TTS 偶发超时）
 - 完整版 ffmpeg（须含 drawtext + libfontconfig）
 - `Pillow`（标题卡制作）
 - 视觉 preset 复用 `comic.py` 风格体系
@@ -252,21 +264,23 @@ python3 story-video-cli.py --script my-story.yaml -o my-story.mp4
    - `description` — 场景图 prompt（英文，给 AGNES t2i/i2i 用）
    - `dialogues[]` — 该场景内的多条角色对话
 3. **角色语音分配** — AI 根据角色类型自动分配 edge-tts voice（可手工在 YAML 中覆盖）
-4. **t2i 首张场景图** — 第一张图作为角色锚定起点
-5. **i2i 后续场景** — 以首张为参考，保证角色外观一致
+4. **t2i 首张场景图** — 第一张图作为角色锚定起点（确定性 seed，相同 description → 相同 seed → 可复现）
+5. **i2i 后续场景** — 以首张为参考，保证角色外观一致（同样使用确定性 seed）
 6. **标题卡** — Pillow 在首张图上叠加故事名
-7. **edge-tts** — 逐条 dialogue 生成音频，每条使用对应角色的 voice（带自动重试，应对微软 TTS 服务偶发超时）
+7. **edge-tts** — 逐条 dialogue 生成音频，每条使用对应角色的 voice（带 3 次重试 + 指数退避，应对微软 TTS 服务偶发超时）
 8. **ffmpeg 合成** — 每个 scene 中多条 dialogue 共用同一画面，音频逐条拼接 + drawtext 字幕逐条切换
+
+> **project 模式**: 指定 `project` 参数后使用项目隔离目录，支持 **checkpoint 断点续传**（`.story-state.yaml` 记录 stages 进度），中断后重新运行自动跳过已完成阶段。`characters` 块可在 YAML 中手工覆盖角色语音。
 
 **自动角色语音映射**:
 
 | 角色倾向 | 自动分配 voice | 示例角色 |
 |---|---|---|
-| 旁白/叙述 | `zh-CN-YunxiaNeural` 童声 | 旁白 |
-| 成年男性 | `zh-CN-YunjianNeural` 低沉 | 大灰狼、爸爸、猎人 |
-| 成年女性 | `zh-CN-XiaoxiaoNeural` 温柔 | 妈妈、奶奶 |
-| 小动物/幼儿 | `zh-CN-YunxiNeural` 活泼 | 小猪、小兔、小鸡 |
-| 活泼女童 | `zh-CN-XiaoyiNeural` 明亮 | 小红帽、姐姐 |
+| 旁白/叙述 | `zh-CN-YunxiaNeural` 童声 | 旁白、叙述 |
+| 成年男性（低沉） | `zh-CN-YunjianNeural` 低沉 | 大灰狼、灰狼、狼、狐狸、老虎、爸爸、猎人 |
+| 成年女性（温柔） | `zh-CN-XiaoxiaoNeural` 温柔 | 妈妈、奶奶、外婆 |
+| 小动物/幼儿（活泼） | `zh-CN-YunxiNeural` 活泼 | 小猪、小兔、小羊、小鸡、小鸭 |
+| 活泼女童（明亮） | `zh-CN-XiaoyiNeural` 明亮 | 小红帽、姐姐、公主 |
 
 可在 YAML 中用 `characters` 块手工覆盖。
 
