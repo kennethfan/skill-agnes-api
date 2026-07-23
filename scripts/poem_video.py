@@ -13,8 +13,6 @@
     path = create_poem_video("script.yaml")
 """
 
-import base64
-import json
 import os
 import shutil
 import subprocess
@@ -22,17 +20,21 @@ import sys
 import tempfile
 import time as _time
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
-from utils import get_default_dir, get_project_intermediate_dir, get_project_deliverable_dir, cleanup_intermediates, get_ffmpeg_bin, get_ffprobe_bin, get_font_path
+from client import ImageClient
+from utils import (
+    get_default_dir,
+    get_project_intermediate_dir,
+    get_project_deliverable_dir,
+    cleanup_intermediates,
+    get_ffmpeg_bin,
+    get_ffprobe_bin,
+    get_font_path,
+)
 
 # --- 路径配置 ---
 
 OUTPUT_DIR = get_default_dir()
 CONFIG_DIR = Path.home() / ".config" / "agnes"
-
-API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
-MODEL = "agnes-image-2.1-flash"
 
 # 完整版 ffmpeg（从 paths.yaml 读取，支持 drawtext、libfontconfig）
 FFMPEG = get_ffmpeg_bin()
@@ -48,24 +50,6 @@ SCENE_W = 736   # AGNES 1K 9:16 标准尺寸
 SCENE_H = 1312
 
 
-def _get_key() -> str:
-    from utils import get_api_key
-    return get_api_key()
-
-
-def _resolve_image(image: str) -> str:
-    """将图片输入转为 AGNES 可用的 URL 或 Data URI"""
-    parsed = urlparse(image)
-    if parsed.scheme in ("http", "https"):
-        return image
-    path = Path(image).expanduser()
-    if not path.exists():
-        raise FileNotFoundError(f"Image not found: {image}")
-    suffix = path.suffix.lower()
-    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-    mime = mime_map.get(suffix, "image/png")
-    b64 = base64.b64encode(path.read_bytes()).decode()
-    return f"data:{mime};base64,{b64}"
 
 
 def _wrap_text(text: str, max_chars: int = 15) -> str:
@@ -109,82 +93,38 @@ def _auto_fit_subtitle(text: str, font_path: str, max_width: int = 660, font_max
 
 
 def _t2i(prompt: str, size: str = "736x1312", output_dir: Path | None = None) -> str:
-    """文生图，返回保存的文件路径（带重试）
+    """文生图，返回保存的文件路径。委托给 ImageClient。
 
     Args:
         prompt: 图像描述
         size: 输出尺寸
         output_dir: 保存目录，默认使用 OUTPUT_DIR
     """
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            body = {"model": MODEL, "prompt": prompt, "size": size}
-            req = Request(
-                API_URL,
-                data=json.dumps(body).encode(),
-                headers={"Authorization": f"Bearer {_get_key()}", "Content-Type": "application/json"},
-                method="POST",
-            )
-            with urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read())
-            image_url = data["data"][0]["url"]
-            timestamp = int(_time.time())
-            save_dir = output_dir or OUTPUT_DIR
-            save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
-            with urlopen(image_url) as img_resp:
-                save_path.write_bytes(img_resp.read())
-            return str(save_path)
-        except Exception as e:
-            if attempt < max_retries - 1:
-                wait = 2 ** attempt
-                print(f"  Retry {attempt+1}/{max_retries} after {wait}s: {e}")
-                _time.sleep(wait)
-            else:
-                raise
+    client = ImageClient()
+    image_url = client.t2i(prompt, size=size)
+    timestamp = int(_time.time())
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
+    save_path.write_bytes(client.download(image_url))
+    return str(save_path)
 
 
 def _i2i(image: str, prompt: str, size: str = "736x1312", output_dir: Path | None = None) -> str:
-    """图生图，返回保存的文件路径（带重试）
+    """图生图，返回保存的文件路径。委托给 ImageClient。
 
     Args:
+        image: 参考图片路径或 URL
+        prompt: 图像描述
+        size: 输出尺寸
         output_dir: 保存目录，默认使用 OUTPUT_DIR
     """
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            image_ref = _resolve_image(image)
-            body = {
-                "model": MODEL,
-                "prompt": prompt,
-                "size": size,
-                "extra_body": {
-                    "image": [image_ref],
-                    "response_format": "url",
-                },
-            }
-            req = Request(
-                API_URL,
-                data=json.dumps(body).encode(),
-                headers={"Authorization": f"Bearer {_get_key()}", "Content-Type": "application/json"},
-                method="POST",
-            )
-            with urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read())
-            image_url = data["data"][0]["url"]
-            timestamp = int(_time.time())
-            save_dir = output_dir or OUTPUT_DIR
-            save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
-            with urlopen(image_url) as img_resp:
-                save_path.write_bytes(img_resp.read())
-            return str(save_path)
-        except Exception as e:
-            if attempt < max_retries - 1:
-                wait = 2 ** attempt
-                print(f"  Retry {attempt+1}/{max_retries} after {wait}s: {e}")
-                _time.sleep(wait)
-            else:
-                raise
+    client = ImageClient()
+    image_url = client.i2i(image, prompt, size=size)
+    timestamp = int(_time.time())
+    save_dir = output_dir or OUTPUT_DIR
+    save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
+    save_path.write_bytes(client.download(image_url))
+    return str(save_path)
 
 
 def _generate_audio(text: str, voice: str, output_path: str) -> float:
