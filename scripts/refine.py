@@ -5,31 +5,21 @@
 2. 工具模式：通过 refine-cli.py CLI 调用
 
 用法示例（AI 驱动）：
-    from refine import refine_image
-    path = refine_image("photo.jpg", "去噪并调亮")
-    path = refine_image("https://example.com/photo.jpg", "变成宫崎骏风格")
+    from refine import refine
+    path = refine("photo.jpg", "去噪并调亮")
+    path = refine("https://example.com/photo.jpg", "变成宫崎骏风格")
 """
 
-import base64
-import json
 import time
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
-from utils import get_default_dir, get_api_key
+from client import ImageClient
+from utils import get_default_dir
 
 # --- 路径配置 ---
 
 CONFIG_DIR = Path.home() / ".config" / "agnes"
 PRESETS_PATH = CONFIG_DIR / "refine-presets.yaml"
 OUTPUT_DIR = get_default_dir()
-
-API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
-MODEL = "agnes-image-2.1-flash"
-
-
-def _get_key() -> str:
-    return get_api_key()
 
 
 def _load_presets() -> dict:
@@ -47,22 +37,6 @@ def list_presets() -> list[dict]:
     presets = _load_presets()
     return [{"key": k, "name": v["name"], "prompt": v["prompt"]} for k, v in presets.items()]
 
-
-def _resolve_image(image: str) -> str:
-    """将图片输入转为 AGNES 可用的 URL 或 Data URI"""
-    from urllib.parse import urlparse
-    parsed = urlparse(image)
-    if parsed.scheme in ("http", "https"):
-        return image
-    import base64
-    path = Path(image).expanduser()
-    if not path.exists():
-        raise FileNotFoundError(f"Image not found: {image}")
-    suffix = path.suffix.lower()
-    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
-    mime = mime_map.get(suffix, "image/png")
-    b64 = base64.b64encode(path.read_bytes()).decode()
-    return f"data:{mime};base64,{b64}"
 
 
 def refine(
@@ -86,11 +60,6 @@ def refine(
     Returns:
         保存的文件路径
     """
-    import json
-    import time
-    from urllib.request import Request, urlopen
-
-    # 构建 prompt
     if custom_prompt:
         prompt = custom_prompt
     elif preset:
@@ -102,35 +71,9 @@ def refine(
     else:
         prompt = operation
 
-    # 处理输入图片
-    image_ref = _resolve_image(image)
-
-    body = {
-        "model": "agnes-image-2.1-flash",
-        "prompt": prompt,
-        "size": size,
-        "ratio": ratio,
-        "extra_body": {
-            "image": [image_ref],
-            "response_format": "url",
-        },
-    }
-
-    req = Request(
-        "https://apihub.agnes-ai.com/v1/images/generations",
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {_get_key()}", "Content-Type": "application/json"},
-        method="POST",
-    )
-
-    with urlopen(req) as resp:
-        data = json.loads(resp.read())
-
-    image_url = data["data"][0]["url"]
+    client = ImageClient()
+    image_url = client.i2i(image, prompt, size=size, ratio=ratio)
     timestamp = int(time.time())
     save_path = OUTPUT_DIR / f"agnes-refine-{timestamp}.png"
-
-    with urlopen(image_url) as img_resp:
-        save_path.write_bytes(img_resp.read())
-
+    save_path.write_bytes(client.download(image_url))
     return str(save_path)

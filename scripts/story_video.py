@@ -25,14 +25,13 @@ import sys
 import tempfile
 import time as _time
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+
 from utils import get_default_dir, get_project_intermediate_dir, get_project_deliverable_dir, cleanup_intermediates, get_font_path
 
 # 复用 poem_video 的函数
 sys.path.insert(0, str(Path(__file__).parent))
 from poem_video import (
-    _t2i, _i2i, _get_key,
+    _t2i, _i2i,
     FFMPEG, FFPROBE, FRAME_W, FRAME_H, SCENE_W, SCENE_H,
     _auto_fit_subtitle,
 )

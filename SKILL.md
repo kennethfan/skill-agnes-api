@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Write, Edit
 
 ## 前置条件
 
-- API key: `~/.config/agnes/key` 或环境变量 `AGNES_API_KEY`
+- API keys: 在 `~/.config/agnes/paths.yaml` 中配置 `agnes_api_keys`，取值为一个或多个 key 文件路径列表
 - 验证 key: `@scripts/check_key.py`
 - 工具函数: `@scripts/utils.py`
 
@@ -31,6 +31,26 @@ allowed-tools: Bash, Read, Write, Edit
 | Auth | `Authorization: Bearer <API_KEY>` |
 
 ---
+
+## 统一客户端 (Client)
+
+| 脚本 | 用途 |
+|---|---|
+| `@scripts/client.py` | 三层客户端：`AgnesClient`(HTTP 传输 + key rotation) → `ImageClient`(t2i/i2i) / `VideoClient`(create/poll) |
+
+所有独立脚本和管线脚本均通过 client.py 访问 API，自动处理 key 轮转和限流重试。
+
+```python
+from client import ImageClient, VideoClient
+
+img = ImageClient()
+url = img.t2i("a cat", size="1024x768")
+data = img.download(url)
+
+vid = VideoClient()
+task_id = vid.create({"prompt": "...", ...})
+result = vid.poll(task_id)
+```
 
 ## 图片生成
 
@@ -89,6 +109,7 @@ python3 refine-cli.py --input photo.jpg --custom-prompt "Make it vintage"
 |---|---|
 | `@scripts/comic.py` | 核心漫画生成函数（AI 驱动模式，被 agent 调用） |
 | `@scripts/comic-cli.py` | CLI 工具模式 |
+| `@scripts/comic-page-layout.py` | 漫画拼页工具 — 在已有场景图上叠加对话框并排布为 2×2 网格页面 |
 
 **CLI 用法**:
 ```
@@ -147,6 +168,9 @@ python3 poem-video-cli.py --script my-poem.yaml
 # 指定童声
 python3 poem-video-cli.py --script my-poem.yaml --voice zh-CN-YunxiaNeural
 
+# 指定输出路径
+python3 poem-video-cli.py --script my-poem.yaml --output my-poem.mp4
+
 # 列出可用中文语音
 python3 poem-video-cli.py --list-voices
 ```
@@ -161,14 +185,14 @@ python3 poem-video-cli.py --list-voices
 3. **封面卡**：用 Pillow 在首张场景图上叠加诗名 + 作者
 4. **edge-tts** 逐句生成朗诵音频（慢速 `--rate=-30%`，默认童声 `zh-CN-YunxiaNeural`）
 5. 场景图缩放到 720×1280
-6. **ffmpeg concat filter** 逐段拼接，**drawtext** 叠加字幕（白字 `fontcolor=white` + 半透明阴影 `shadowcolor=black@0.5`，居中对齐，距底部 80px），无黑底遮罩
+6. **ffmpeg concat filter** 逐段拼接，**drawtext** 叠加字幕（白字 `fontcolor=white` + 半透明阴影 `shadowcolor=black@0.5`，居中对齐，距底部随字号自适应（`h-text_h-60`）），无黑底遮罩
 
 **参数说明**:
 | 参数 | 值 |
 |---|---|
 | 视频尺寸 | 720×1280 (9:16 竖屏) |
 | 场景生成尺寸 | 736×1312 (AGNES 1K 9:16) |
-| 字幕位置 | `(w-text_w)/2` 水平居中，`h-80` 距底部 80px |
+| 字幕位置 | `(w-text_w)/2` 水平居中，`h-text_h-60` 距底部（随字号自适应） |
 | 字幕字体 | PingFang.ttc / STHeiti Light.ttc |
 | 字幕样式 | 42px 白色 + 2px 半透明阴影 |
 | 语音 | edge-tts —rate=-30% 慢速朗诵 |
@@ -203,17 +227,17 @@ lines:
 
 **CLI 用法**:
 ```
-# 搜索故事 → 全自动生成视频
-python3 story-video-cli.py --title "三只小猪"
+# 从 YAML 脚本生成故事视频
+python3 story-video-cli.py --script my-story.yaml
 
 # 指定视觉风格
-python3 story-video-cli.py --title "三只小猪" --style ink-wash
+python3 story-video-cli.py --script my-story.yaml --style ink-wash
 
-# 跳过搜索，直接给文本文件
+# 从文本文件生成（跳过搜索）
 python3 story-video-cli.py --textfile my-story.txt --style american
 
 # 指定输出路径
-python3 story-video-cli.py --title "三只小猪" -o my-story.mp4
+python3 story-video-cli.py --script my-story.yaml -o my-story.mp4
 ```
 
 **依赖**:
