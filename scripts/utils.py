@@ -7,9 +7,10 @@ import json
 import os
 import sys
 import base64
-import time
+import time as _time
 import shutil
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
@@ -204,15 +205,136 @@ OUTPUT_DIR_IMAGES = get_default_dir()
 OUTPUT_DIR_VIDEOS = get_default_dir()
 
 
+# ─── Key Pool（多 key 轮转限流） ───────────────────────────
+
+class KeyPool:
+    """Round-robin API key pool with automatic cooldown on 503."""
+
+    def __init__(self):
+        self._keys: list[str] = []
+        self._loaded = False
+        self._index = 0
+        self._cooldowns: dict[int, float] = {}
+
+    def _ensure_loaded(self):
+        if self._loaded:
+            return
+        backups = _cfg("agnes_api_keys", [])
+        for fp in backups:
+            path = Path(fp).expanduser()
+            if path.exists():
+                self._keys.append(path.read_text(encoding="utf-8").strip())
+        if not self._keys:
+            raise RuntimeError(
+                "No API keys configured. Set `agnes_api_keys` in your paths.yaml file."
+            )
+        self._loaded = True
+
+    def acquire(self) -> tuple[str, int]:
+        """Get the next available key. Returns (key_string, key_index)."""
+        self._ensure_loaded()
+        now = _time.time()
+        expired = [idx for idx, until in list(self._cooldowns.items()) if now >= until]
+        for idx in expired:
+            del self._cooldowns[idx]
+
+        n = len(self._keys)
+        for _ in range(n * 2):
+            idx = self._index % n
+            self._index += 1
+            if idx not in self._cooldowns:
+                return self._keys[idx], idx
+
+        earliest = min(self._cooldowns.values())
+        wait = max(0.1, earliest - now)
+        print(f"  All {n} keys rate-limited, waiting {wait:.0f}s...")
+        _time.sleep(wait)
+        self._cooldowns.clear()
+        idx = self._index % n
+        self._index += 1
+        return self._keys[idx], idx
+
+    def report_503(self, key_index: int):
+        """Mark a key as rate-limited. It enters cooldown for key_cooldown_seconds."""
+        cooldown = _cfg("key_cooldown_seconds", 30)
+        self._cooldowns[key_index] = _time.time() + cooldown
+        available = len(self._keys) - len(self._cooldowns)
+        print(f"  Key {key_index} rate-limited, cooling {cooldown}s ({available}/{len(self._keys)} keys available)")
+
+    def key_count(self) -> int:
+        self._ensure_loaded()
+        return len(self._keys)
+
+
+_key_pool: KeyPool | None = None
+
+
+def get_key_pool() -> KeyPool:
+    """Get or create the global API key pool."""
+    global _key_pool
+    if _key_pool is None:
+        _key_pool = KeyPool()
+    return _key_pool
+
+
+def urlopen_with_rotation(
+    url: str,
+    data: bytes | None = None,
+    headers: dict | None = None,
+    method: str = "POST",
+    timeout: int = 60,
+    max_retries: int | None = None,
+):
+    """urlopen wrapper with automatic key rotation on HTTP 503.
+
+    On 503: rotate to next key and retry immediately (no backoff).
+    On other errors: exponential backoff then retry.
+    """
+    pool = get_key_pool()
+    if max_retries is None:
+        max_retries = pool.key_count() * 3
+
+    base_headers = {"Content-Type": "application/json", **(headers or {})}
+
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        key, key_idx = pool.acquire()
+        hdrs = {**base_headers, "Authorization": f"Bearer {key}"}
+        try:
+            req = Request(url, data=data, headers=hdrs, method=method)
+            return urlopen(req, timeout=timeout)
+        except HTTPError as e:
+            if e.code == 503:
+                pool.report_503(key_idx)
+                last_error = e
+                continue
+            raise
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = min(2 ** attempt, 30)
+                print(f"  Retry {attempt + 1}/{max_retries} after {wait}s: {e}")
+                _time.sleep(wait)
+                last_error = e
+                continue
+            raise
+
+    raise RuntimeError(f"API request failed after {max_retries} retries") from last_error
+
+
 # ─── API 工具 ──────────────────────────────────────────
 
 
 def get_api_key() -> str:
-    """从文件或环境变量读取 API key。"""
-    key_file = _config_dir() / "key"
-    if key_file.exists():
-        return key_file.read_text(encoding="utf-8").strip()
-    return os.environ.get("AGNES_API_KEY", "")
+    """从 paths.yaml agnes_api_keys 的第一把 key 文件读取。"""
+    keys = _cfg("agnes_api_keys", [])
+    if not keys:
+        raise RuntimeError(
+            "No API keys configured. Set `agnes_api_keys` in your paths.yaml file."
+        )
+    path = Path(keys[0]).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"API key file not found: {path}")
+    return path.read_text(encoding="utf-8").strip()
 
 
 def api_headers() -> dict:
@@ -223,22 +345,22 @@ def api_headers() -> dict:
 
 
 def api_post(path: str, body: dict) -> dict:
-    """发起 POST 请求并返回解析后的 JSON。"""
-    req = Request(
+    """发起 POST 请求并返回解析后的 JSON（带 key rotation）。"""
+    resp = urlopen_with_rotation(
         f"{BASE_URL}{path}",
         data=json.dumps(body).encode(),
-        headers=api_headers(),
         method="POST",
     )
-    with urlopen(req) as resp:
-        return json.loads(resp.read())
+    return json.loads(resp.read())
 
 
 def api_get(path: str) -> dict:
-    """发起 GET 请求并返回解析后的 JSON。"""
-    req = Request(f"{BASE_URL}{path}", headers=api_headers(), method="GET")
-    with urlopen(req) as resp:
-        return json.loads(resp.read())
+    """发起 GET 请求并返回解析后的 JSON（带 key rotation）。"""
+    resp = urlopen_with_rotation(
+        f"{BASE_URL}{path}",
+        method="GET",
+    )
+    return json.loads(resp.read())
 
 
 def download_file(url: str, save_path: Path):
