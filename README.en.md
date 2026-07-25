@@ -17,7 +17,7 @@
 - **Image Refinement** — I2I-based enhancement, style transfer, localized edits with preset styles
 - **Comic Creation** — Panel-by-panel comic generation from YAML scripts, speech bubbles, multi-layout page assembly
 - **Poem Video** — Poetry → AGNES scene images + edge-tts narration + ffmpeg composition, ink-wash vertical video
-- **Story Animation** — Multi-character story videos for children (ages 3-6) with consistent character appearance
+- **Story Animation** — Multi-character story videos for children (ages 3-6) with consistent character appearance, checkpoint resume support
 - **Video Generation** — Text-to-Video (T2V), Image-to-Video (I2V), keyframe animation (async polling)
 - **Pure Python stdlib** — Uses `urllib` only, no `requests` dependency
 
@@ -91,15 +91,16 @@ When this file doesn't exist, defaults apply automatically.
 ├── AGENTS.md                 # Agent knowledge base
 ├── SKILL.md                  # Skill definition (agent entry point)
 ├── CONTEXT.md                # Domain glossary
-├── docs/adr/                 # Architecture Decision Records
-│   ├── 0001-image-refine-tool.md
-│   ├── 0002-story-video-architecture.md
-│   └── 0003-file-organization.md
+├── docs/
+│   ├── adr/                  # Architecture Decision Records (0001‑0005)
+│   └── pipelines/            # Pipeline docs (poem / story / today-in-history)
 ├── scripts/                  # All code (flat structure, no package)
-│   ├── utils.py              # Shared utilities: API key, HTTP helpers, output dirs
+│   ├── utils.py              # Shared utilities: API key, HTTP helpers, output dirs, KeyPool
+│   ├── client.py             # Unified client: AgnesClient / ImageClient / VideoClient
 │   ├── t2i.py                # Text-to-Image (example, runs on import)
 │   ├── i2i.py                # Image-to-Image (example, runs on import)
 │   ├── compose.py            # Multi-image composition (example)
+│   ├── t2i_base64.py         # Text-to-Image — Base64 output (example)
 │   ├── refine.py             # Core — image refinement
 │   ├── refine-cli.py         # CLI wrapper
 │   ├── comic.py              # Core — comic generation
@@ -109,12 +110,18 @@ When this file doesn't exist, defaults apply automatically.
 │   ├── poem-video-cli.py     # CLI wrapper
 │   ├── story_video.py        # Core — story video (extends poem_video)
 │   ├── story-video-cli.py    # CLI wrapper
-│   ├── t2i_base64.py         # Text-to-Image — Base64 output (example)
 │   ├── t2v.py                # Text-to-Video (example)
 │   ├── i2v.py                # Image-to-Video (example)
 │   ├── keyframes.py          # Keyframe animation (example)
 │   ├── poll_video.py         # Poll video result
-│   └── query_video.py        # Query task status
+│   ├── query_video.py        # Query task status
+│   ├── check_key.py          # Verify API key
+│   └── pipelines/            # Composite pipeline scripts (checkpoint-based)
+│       ├── poem-pipeline.py
+│       ├── story-pipeline.py
+│       └── today-in-history-pipeline.py
+├── .omo/
+│   └── run-continuation/     # OpenCode run continuation state
 ├── LICENSE                   # Apache 2.0
 └── .gitignore
 ```
@@ -209,18 +216,20 @@ python3 scripts/poem-video-cli.py --script my-poem.yaml --voice zh-CN-YunxiaNeur
 ### Story Animation Video
 
 ```bash
-# Auto-search story → fully automatic generation
-python3 scripts/story-video-cli.py --title "Three Little Pigs"
+# Generate from YAML script (recommended)
+python3 scripts/story-video-cli.py --script my-story.yaml
 
 # Specify visual style
-python3 scripts/story-video-cli.py --title "Three Little Pigs" --style ink-wash
+python3 scripts/story-video-cli.py --script my-story.yaml --style ink-wash
 
-# Generate from text file
-python3 scripts/story-video-cli.py --textfile my-story.txt
+# Specify output path
+python3 scripts/story-video-cli.py --script my-story.yaml -o my-story.mp4
 
-# Project-isolated intermediate files
-python3 scripts/story-video-cli.py --title "Three Little Pigs" --project "three-little-pigs"
+# Project-isolated intermediate files (with checkpoint resume)
+python3 scripts/story-video-cli.py --script my-story.yaml --project "three-little-pigs"
 ```
+
+> ⚠️ `--title` search mode and `--textfile` mode are not yet implemented. Only `--script` mode is currently supported. Prepare a YAML script externally first.
 
 ### Video Generation (Async)
 
@@ -231,6 +240,21 @@ python3 scripts/t2v.py
 # Poll result
 python3 scripts/poll_video.py <task_id>
 ```
+
+### Composite Pipelines
+
+```bash
+# Full poem workflow (generate images → TTS → compose video)
+python3 scripts/pipelines/poem-pipeline.py
+
+# Full story workflow (multi-character TTS + scene gen + frame composition)
+python3 scripts/pipelines/story-pipeline.py
+
+# Today-in-history video (search events → generate video)
+python3 scripts/pipelines/today-in-history-pipeline.py
+```
+
+> See [`docs/pipelines/`](docs/pipelines/) for detailed pipeline documentation.
 
 ---
 
@@ -312,6 +336,9 @@ lines:
 title: "Three Little Pigs"
 source: "Classic Tale"
 style: "american"
+characters:                          # optional, override character voices
+  BrotherPig: "zh-CN-YunxiNeural"
+  BigBadWolf: "zh-CN-YunjianNeural"
 scenes:
   - description: "Three little piglets saying goodbye to their mother..."
     dialogues:
@@ -321,6 +348,8 @@ scenes:
         text: "Little pig, little pig, let me come in!"
         voice: "zh-CN-YunjianNeural"   # optional, overrides auto-map
 ```
+
+> The top-level `characters` block overrides voice assignment for any character, taking priority over the auto-mapping. Individual `voice` per dialogue entry further overrides the character-level setting.
 
 ---
 
@@ -343,13 +372,13 @@ scenes:
 
 Automatic edge-tts voice assignment for story characters (overridable in YAML):
 
-| Character Type | Auto-assigned Voice | Example |
+| Character Type | Auto-assigned Voice | Example Characters |
 |----------------|-------------------|---------|
 | Narrator | `zh-CN-YunxiaNeural` child-like | Narrator |
-| Adult male | `zh-CN-YunjianNeural` deep | Wolf, Father, Hunter |
-| Adult female | `zh-CN-XiaoxiaoNeural` gentle | Mother, Grandma |
-| Animal/Kid | `zh-CN-YunxiNeural` lively | Pig, Bunny, Chick |
-| Lively girl | `zh-CN-XiaoyiNeural` bright | Red Riding Hood, Sister |
+| Adult male (deep) | `zh-CN-YunjianNeural` deep | Big Bad Wolf, Wolf, Fox, Tiger, Father, Hunter |
+| Adult female (gentle) | `zh-CN-XiaoxiaoNeural` gentle | Mother, Grandma, Grandmother |
+| Animal/Kid (lively) | `zh-CN-YunxiNeural` lively | Pig, Bunny, Lamb, Chick, Duckling |
+| Lively girl (bright) | `zh-CN-XiaoyiNeural` bright | Red Riding Hood, Sister, Princess |
 
 ---
 
@@ -370,6 +399,8 @@ Automatic edge-tts voice assignment for story characters (overridable in YAML):
 - [ADR 0001: Image Refinement Tool Based on AGNES I2I](docs/adr/0001-image-refine-tool.md)
 - [ADR 0002: Story Video Architecture](docs/adr/0002-story-video-architecture.md)
 - [ADR 0003: File Organization — Role-Isolated Project Layout](docs/adr/0003-file-organization.md)
+- [ADR 0004: Runtime Dependency Paths](docs/adr/0004-runtime-dependency-paths.md)
+- [ADR 0005: Consolidate Under agnes-api Skill](docs/adr/0005-consolidate-skills-under-agnes-api.md)
 
 ---
 

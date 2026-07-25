@@ -17,7 +17,7 @@
 - **图片精修** — 基于 I2I 的画质增强、风格迁移、局部修改，支持预设风格
 - **漫画创作** — 从 YAML 脚本逐格生成漫画，支持对话框叠加、多布局拼页
 - **诗词朗诵视频** — 诗词 → AGNES 场景图 + edge-tts 朗诵音频 + ffmpeg 合成，水墨国风竖屏
-- **故事动画视频** — 面向 3-6 岁儿童的多角色配音故事动画，角色外观一致性保持
+- **故事动画视频** — 面向 3-6 岁儿童的多角色配音故事动画，角色外观一致性保持，支持 checkpoint 断点续传
 - **视频生成** — 文生视频 (T2V)、图生视频 (I2V)、关键帧动画，异步轮询
 - **纯 Python 标准库** — 仅依赖 `urllib`，无 `requests` 库
 
@@ -91,15 +91,16 @@ cleanup:
 ├── AGENTS.md                 # Agent 知识库
 ├── SKILL.md                  # Skill 定义（agent 入口）
 ├── CONTEXT.md                # 领域术语表
-├── docs/adr/                 # 架构决策记录
-│   ├── 0001-image-refine-tool.md
-│   ├── 0002-story-video-architecture.md
-│   └── 0003-file-organization.md
+├── docs/
+│   ├── adr/                  # 架构决策记录（0001‑0005）
+│   └── pipelines/            # 管线文档（poem / story / today-in-history）
 ├── scripts/                  # 所有代码（扁平结构，无包）
-│   ├── utils.py              # 共享工具：API key、HTTP 辅助、输出目录
+│   ├── utils.py              # 共享工具：API key、HTTP 辅助、输出目录、KeyPool
+│   ├── client.py             # 统一客户端：AgnesClient / ImageClient / VideoClient
 │   ├── t2i.py                # 文生图（示例脚本，运行于 import）
 │   ├── i2i.py                # 图生图（示例脚本，运行于 import）
 │   ├── compose.py            # 多图合成（示例脚本）
+│   ├── t2i_base64.py         # 文生图 — Base64 输出（示例脚本）
 │   ├── refine.py             # 核心 — 图片精修
 │   ├── refine-cli.py         # CLI 封装
 │   ├── comic.py              # 核心 — 漫画生成
@@ -109,12 +110,18 @@ cleanup:
 │   ├── poem-video-cli.py     # CLI 封装
 │   ├── story_video.py        # 核心 — 故事视频（扩展 poem_video）
 │   ├── story-video-cli.py    # CLI 封装
-│   ├── t2i_base64.py         # 文生图 — Base64 输出（示例脚本）
 │   ├── t2v.py                # 文生视频（示例脚本）
 │   ├── i2v.py                # 图生视频（示例脚本）
 │   ├── keyframes.py          # 关键帧动画（示例脚本）
 │   ├── poll_video.py         # 轮询视频结果
-│   └── query_video.py        # 查询任务状态
+│   ├── query_video.py        # 查询任务状态
+│   ├── check_key.py          # 验证 API Key
+│   └── pipelines/            # 复合管线脚本（checkpoint 断点续传）
+│       ├── poem-pipeline.py
+│       ├── story-pipeline.py
+│       └── today-in-history-pipeline.py
+├── .omo/
+│   └── run-continuation/     # OpenCode 运行续接状态
 ├── LICENSE                   # Apache 2.0
 └── .gitignore
 ```
@@ -209,18 +216,20 @@ python3 scripts/poem-video-cli.py --script my-poem.yaml --voice zh-CN-YunxiaNeur
 ### 故事动画视频
 
 ```bash
-# 搜索故事 → 全自动生成
-python3 scripts/story-video-cli.py --title "三只小猪"
+# 从 YAML 脚本生成（推荐）
+python3 scripts/story-video-cli.py --script my-story.yaml
 
 # 指定视觉风格
-python3 scripts/story-video-cli.py --title "三只小猪" --style ink-wash
+python3 scripts/story-video-cli.py --script my-story.yaml --style ink-wash
 
-# 从文本文件生成
-python3 scripts/story-video-cli.py --textfile my-story.txt
+# 指定输出路径
+python3 scripts/story-video-cli.py --script my-story.yaml -o my-story.mp4
 
-# 使用项目目录隔离中间文件
-python3 scripts/story-video-cli.py --title "三只小猪" --project 三只小猪
+# 使用项目目录隔离中间文件（支持 checkpoint 断点续传）
+python3 scripts/story-video-cli.py --script my-story.yaml --project 三只小猪
 ```
+
+> ⚠️ `--title` 搜索模式和 `--textfile` 文本直出模式暂未实现，当前仅支持 `--script` 模式。需在外部准备 YAML 脚本后传入。
 
 ### 视频生成（异步）
 
@@ -231,6 +240,21 @@ python3 scripts/t2v.py
 # 轮询结果
 python3 scripts/poll_video.py <task_id>
 ```
+
+### 复合管线
+
+```bash
+# 诗词全流程（生成图片 → TTS → 合成视频）
+python3 scripts/pipelines/poem-pipeline.py
+
+# 故事动画全流程（多角色配音 + 场景生成 + 逐帧合成）
+python3 scripts/pipelines/story-pipeline.py
+
+# 历史上的今天视频（搜索当日事件 → 生成视频）
+python3 scripts/pipelines/today-in-history-pipeline.py
+```
+
+> 详细管线流程文档见 [`docs/pipelines/`](docs/pipelines/)。
 
 ---
 
@@ -312,6 +336,9 @@ lines:
 title: "三只小猪"
 source: "经典童话"
 style: "american"
+characters:                          # 可选，手工覆盖角色语音
+  小猪大哥: "zh-CN-YunxiNeural"
+  大灰狼: "zh-CN-YunjianNeural"
 scenes:
   - description: "Three little piglets saying goodbye to their mother..."
     dialogues:
@@ -321,6 +348,8 @@ scenes:
         text: "小猪小猪，让我进来！"
         voice: "zh-CN-YunjianNeural"   # 可选，覆盖自动映射
 ```
+
+> `characters` 块可在顶层手工覆盖任意角色的 edge-tts 语音，优先级高于自动映射。每条 dialogue 内的 `voice` 进一步覆盖角色级设置。
 
 ---
 
@@ -345,11 +374,11 @@ scenes:
 
 | 角色倾向 | 自动分配语音 | 示例角色 |
 |----------|-------------|---------|
-| 旁白/叙述 | `zh-CN-YunxiaNeural` 童声 | 旁白 |
-| 成年男性 | `zh-CN-YunjianNeural` 低沉 | 大灰狼、爸爸、猎人 |
-| 成年女性 | `zh-CN-XiaoxiaoNeural` 温柔 | 妈妈、奶奶 |
-| 小动物/幼儿 | `zh-CN-YunxiNeural` 活泼 | 小猪、小兔、小鸡 |
-| 活泼女童 | `zh-CN-XiaoyiNeural` 明亮 | 小红帽、姐姐 |
+| 旁白/叙述 | `zh-CN-YunxiaNeural` 童声 | 旁白、叙述 |
+| 成年男性（低沉） | `zh-CN-YunjianNeural` 低沉 | 大灰狼、灰狼、狼、狐狸、老虎、爸爸、猎人 |
+| 成年女性（温柔） | `zh-CN-XiaoxiaoNeural` 温柔 | 妈妈、奶奶、外婆 |
+| 小动物/幼儿（活泼） | `zh-CN-YunxiNeural` 活泼 | 小猪、小兔、小羊、小鸡、小鸭 |
+| 活泼女童（明亮） | `zh-CN-XiaoyiNeural` 明亮 | 小红帽、姐姐、公主 |
 
 ---
 
@@ -370,6 +399,8 @@ scenes:
 - [ADR 0001: 基于 AGNES i2i 的图片精修工具](docs/adr/0001-image-refine-tool.md)
 - [ADR 0002: 故事视频架构](docs/adr/0002-story-video-architecture.md)
 - [ADR 0003: 文件组织 — 角色隔离的项目布局](docs/adr/0003-file-organization.md)
+- [ADR 0004: 运行时依赖路径](docs/adr/0004-runtime-dependency-paths.md)
+- [ADR 0005: 统一到 agnes-api skill 下](docs/adr/0005-consolidate-skills-under-agnes-api.md)
 
 ---
 

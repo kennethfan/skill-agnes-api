@@ -92,16 +92,17 @@ def _auto_fit_subtitle(text: str, font_path: str, max_width: int = 660, font_max
     return _wrap_text(text, 10), font_min
 
 
-def _t2i(prompt: str, size: str = "736x1312", output_dir: Path | None = None) -> str:
+def _t2i(prompt: str, size: str = "736x1312", output_dir: Path | None = None, seed: int | None = None) -> str:
     """文生图，返回保存的文件路径。委托给 ImageClient。
 
     Args:
         prompt: 图像描述
         size: 输出尺寸
         output_dir: 保存目录，默认使用 OUTPUT_DIR
+        seed: 随机种子（相同 seed 复现结果）
     """
     client = ImageClient()
-    image_url = client.t2i(prompt, size=size)
+    image_url = client.t2i(prompt, size=size, seed=seed)
     timestamp = int(_time.time())
     save_dir = output_dir or OUTPUT_DIR
     save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
@@ -109,7 +110,7 @@ def _t2i(prompt: str, size: str = "736x1312", output_dir: Path | None = None) ->
     return str(save_path)
 
 
-def _i2i(image: str, prompt: str, size: str = "736x1312", output_dir: Path | None = None) -> str:
+def _i2i(image: str, prompt: str, size: str = "736x1312", output_dir: Path | None = None, seed: int | None = None) -> str:
     """图生图，返回保存的文件路径。委托给 ImageClient。
 
     Args:
@@ -117,9 +118,10 @@ def _i2i(image: str, prompt: str, size: str = "736x1312", output_dir: Path | Non
         prompt: 图像描述
         size: 输出尺寸
         output_dir: 保存目录，默认使用 OUTPUT_DIR
+        seed: 随机种子（相同 seed 复现结果）
     """
     client = ImageClient()
-    image_url = client.i2i(image, prompt, size=size)
+    image_url = client.i2i(image, prompt, size=size, seed=seed)
     timestamp = int(_time.time())
     save_dir = output_dir or OUTPUT_DIR
     save_path = save_dir / f"agnes-poem-scene-{timestamp}.png"
