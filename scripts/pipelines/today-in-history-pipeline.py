@@ -540,6 +540,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--clean", action="store_true", help="成功后清理 temp")
     p.add_argument("--force-stage", type=int, choices=[1, 2, 3], help="强制重跑某阶段")
     p.add_argument("--skip-stage", type=int, choices=[1, 2], help="跳过某阶段")
+    p.add_argument("--workers", type=int, default=None,
+                   help="AGNES API 并发数（默认 5）")
     return p.parse_args()
 
 
@@ -549,6 +551,10 @@ def main() -> None:
     # --- Apply work directory ---
     if args.work_dir:
         _set_work_dir(Path(args.work_dir))
+
+    global AGNES_MAX_WORKERS
+    if args.workers is not None:
+        AGNES_MAX_WORKERS = args.workers
 
     # --- Validate date ---
     date = args.date
