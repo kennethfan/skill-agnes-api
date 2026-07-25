@@ -57,13 +57,14 @@ AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
 AGNES_MODEL = "agnes-image-2.1-flash"
 AGNES_KEY_FILE = Path.home() / ".config" / "agnes" / "key"
 AGNES_SIZE = "2K"
-AGNES_RATIO = "16:9"
-AGNES_MAX_WORKERS = 5
+AGNES_RATIO = "9:16"
+AGNES_MAX_WORKERS = 2
 AGNES_RETRIES = 3
+STYLE_PREFIX = "Children's storybook illustration, hanfu ancient Chinese clothing, soft warm colors, consistent art style"
 
-# Video — 16:9 same as today-in-history
-VIDEO_WIDTH = 1920
-VIDEO_HEIGHT = 1080
+# Video — 9:16 vertical (mobile / shorts format)
+VIDEO_WIDTH = 1080
+VIDEO_HEIGHT = 1920
 FPS = 24
 FONT_PATH = "/System/Library/Fonts/PingFang.ttc"
 SUBTITLE_FONT_SIZE = 40
@@ -205,7 +206,7 @@ def scan_story_images(stem: str) -> dict[int, Path]:
     return result
 
 
-def stage1_generate(stem: str, scenes: list[dict]) -> int:
+def stage1_generate(stem: str, scenes: list[dict], style_prefix: str = "") -> int:
     """Generate scene images via AGNES t2i. Returns number of failures."""
     print("\n" + "=" * 60)
     print(f"🎨 Stage 1: Scene Image Generation ({stem})")
@@ -213,6 +214,8 @@ def stage1_generate(stem: str, scenes: list[dict]) -> int:
 
     api_key = _load_agnes_key()
     print(f"🔑 Key loaded ({api_key[:8]}…{api_key[-4:]})")
+    if style_prefix:
+        print(f"🎨 Style prefix: {style_prefix}")
 
     existing = scan_story_images(stem)
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -237,6 +240,8 @@ def stage1_generate(stem: str, scenes: list[dict]) -> int:
 
     def _work_one(idx: int, sc: dict) -> tuple[int, str | None, str | None]:
         desc = sc["description"]
+        if style_prefix:
+            desc = f"{style_prefix}. {desc}"
         for attempt in range(1, AGNES_RETRIES + 1):
             try:
                 print(f"  [{idx+1:2d}] (try {attempt}/{AGNES_RETRIES}) Generating…")
@@ -586,6 +591,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--work-dir", default=None, help="工作目录（默认 ~/agent/media/）")
     p.add_argument("--force-stage", type=int, choices=[1, 2, 3], help="强制重跑某阶段")
     p.add_argument("--skip-stage", type=int, choices=[1, 2], help="跳过某阶段")
+    p.add_argument("--style-prefix", default=None,
+                   help="统一风格前缀，注入每个场景 prompt 前（默认：绘本风格+汉代服饰）")
+    p.add_argument("--workers", type=int, default=None,
+                   help="AGNES API 并发数（默认 2；值太大多图容易超时）")
     return p.parse_args()
 
 
@@ -595,6 +604,10 @@ def main() -> None:
     # --- Apply work directory ---
     if args.work_dir:
         _set_work_dir(Path(args.work_dir))
+
+    global AGNES_MAX_WORKERS
+    if args.workers is not None:
+        AGNES_MAX_WORKERS = args.workers
 
     # --- Resolve YAML ---
     try:
@@ -629,6 +642,10 @@ def main() -> None:
     )
     print(f"📁 Output: {output}")
 
+    style_prefix = args.style_prefix if args.style_prefix is not None else STYLE_PREFIX
+    if style_prefix:
+        print(f"🎨 Style prefix: {style_prefix[:60]}…")
+
     temp_dir = TEMP_BASE / f"pipeline_{cp_key}"
     state = load_checkpoint()
     print(f"🔍 Checkpoint entries: {len(state)}")
@@ -641,7 +658,7 @@ def main() -> None:
     elif stage_is_done(state, cp_key, 1) and not force_s1:
         print(f"\n⏭️  Stage 1 done (checkpoint), use --force-stage 1 to re-run")
     else:
-        failed = stage1_generate(stem, scenes)
+        failed = stage1_generate(stem, scenes, style_prefix)
         if failed:
             print(f"⚠️  Stage 1 finished with {failed} failure(s)")
         mark_stage_done(state, cp_key, 1)
