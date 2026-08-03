@@ -77,6 +77,11 @@ KID_VOICE = "zh-CN-YunxiNeural"
 GIRL_VOICE = "zh-CN-XiaoyiNeural"
 EDGE_TTS_RATE = "-30%"
 
+# Overridable via CLI
+OUTPUT_SUBDIR = "儿童故事"   # override: --subdir
+TITLE_TTS_FMT = "{title}，让我们一起听故事吧。"  # override: --title-tts ({title} 占位符)
+TAG_LINE = "儿童故事 · 动画版"  # override: --tagline
+
 # YAML search dirs (relative to BASE_DIR)
 YAML_SEARCH_DIRS = [Path("."), Path("scripts")]
 
@@ -405,7 +410,7 @@ def _create_title_card(title: str, source: str, bg_img: Image.Image | None) -> I
         draw.text((sx, sy), src_text, font=sf, fill=(200, 200, 200))
 
         # Bottom tag
-        tag_text = "儿童故事 · 动画版"
+        tag_text = TAG_LINE
         tb = draw.textbbox((0, 0), tag_text, font=sf)
         tg_x = (bg.width - (tb[2] - tb[0])) // 2
         tg_y = sy + SUB_TITLE_FONT_SIZE + 16
@@ -460,7 +465,7 @@ def stage2_prepare(
 
     title_audio = temp_dir / "audio_title.mp3"
     if not title_audio.exists():
-        tts_text = f"{title}，让我们一起听故事吧。"
+        tts_text = TITLE_TTS_FMT.format(title=title)
         _generate_audio(tts_text, NARRATOR_VOICE, title_audio)
     dur_t = _audio_duration(title_audio)
     print(f"   Title audio: {dur_t:.2f}s")
@@ -595,6 +600,26 @@ def parse_args() -> argparse.Namespace:
                    help="统一风格前缀，注入每个场景 prompt 前（默认：绘本风格+汉代服饰）")
     p.add_argument("--workers", type=int, default=None,
                    help="AGNES API 并发数（默认 2；值太大多图容易超时）")
+    p.add_argument("--subdir", default=None,
+                   help="输出子目录相对 videos/（默认: 儿童故事）")
+    p.add_argument("--tagline", default=None,
+                   help="标题卡底部文字（默认: 儿童故事 · 动画版）")
+    p.add_argument("--title-tts", default=None,
+                   help="标题卡 TTS 文案模板，可用 {title} 占位符（默认: {title}，让我们一起听故事吧。）")
+    p.add_argument("--width", type=int, default=None, help="视频宽度（默认 1080）")
+    p.add_argument("--height", type=int, default=None, help="视频高度（默认 1920）")
+    p.add_argument("--size", default=None, help="AGNES 图片尺寸（默认 2K）")
+    p.add_argument("--ratio", default=None, help="AGNES 图片宽高比（默认 9:16）")
+    p.add_argument("--model", default=None, help="AGNES 图片模型（默认 agnes-image-2.1-flash）")
+    p.add_argument("--font", default=None, help="字体文件路径（默认 PingFang.ttc）")
+    p.add_argument("--subtitle-size", type=int, default=None, help="字幕字号（默认 40）")
+    p.add_argument("--title-size", type=int, default=None, help="标题字号（默认 80）")
+    p.add_argument("--narrator-voice", default=None, help="旁白语音（默认 zh-CN-YunxiaNeural）")
+    p.add_argument("--male-voice", default=None, help="男性角色语音（默认 zh-CN-YunjianNeural）")
+    p.add_argument("--female-voice", default=None, help="女性角色语音（默认 zh-CN-XiaoxiaoNeural）")
+    p.add_argument("--kid-voice", default=None, help="儿童语音（默认 zh-CN-YunxiNeural）")
+    p.add_argument("--girl-voice", default=None, help="女孩语音（默认 zh-CN-XiaoyiNeural）")
+    p.add_argument("--rate", default=None, help="edge-tts 语速（默认 -30%%）")
     return p.parse_args()
 
 
@@ -605,9 +630,47 @@ def main() -> None:
     if args.work_dir:
         _set_work_dir(Path(args.work_dir))
 
-    global AGNES_MAX_WORKERS
+    global AGNES_MAX_WORKERS, AGNES_SIZE, AGNES_MODEL, AGNES_RATIO
+    global VIDEO_WIDTH, VIDEO_HEIGHT, FONT_PATH
+    global SUBTITLE_FONT_SIZE, TITLE_FONT_SIZE, NARRATOR_VOICE
+    global MALE_VOICE, FEMALE_VOICE, KID_VOICE, GIRL_VOICE
+    global EDGE_TTS_RATE, OUTPUT_SUBDIR, TITLE_TTS_FMT, TAG_LINE
     if args.workers is not None:
         AGNES_MAX_WORKERS = args.workers
+    if args.width is not None:
+        VIDEO_WIDTH = args.width
+    if args.height is not None:
+        VIDEO_HEIGHT = args.height
+    if args.size is not None:
+        AGNES_SIZE = args.size
+    if args.ratio is not None:
+        AGNES_RATIO = args.ratio
+    if args.model is not None:
+        AGNES_MODEL = args.model
+    if args.font is not None:
+        FONT_PATH = args.font
+    if args.subtitle_size is not None:
+        SUBTITLE_FONT_SIZE = args.subtitle_size
+    if args.title_size is not None:
+        TITLE_FONT_SIZE = args.title_size
+    if args.narrator_voice is not None:
+        NARRATOR_VOICE = args.narrator_voice
+    if args.male_voice is not None:
+        MALE_VOICE = args.male_voice
+    if args.female_voice is not None:
+        FEMALE_VOICE = args.female_voice
+    if args.kid_voice is not None:
+        KID_VOICE = args.kid_voice
+    if args.girl_voice is not None:
+        GIRL_VOICE = args.girl_voice
+    if args.rate is not None:
+        EDGE_TTS_RATE = args.rate
+    if args.subdir is not None:
+        OUTPUT_SUBDIR = args.subdir
+    if args.tagline is not None:
+        TAG_LINE = args.tagline
+    if args.title_tts is not None:
+        TITLE_TTS_FMT = args.title_tts
 
     # --- Resolve YAML ---
     try:
@@ -638,7 +701,7 @@ def main() -> None:
     output = (
         Path(args.output)
         if args.output
-        else VIDEOS_DIR / "儿童故事" / f"{title}.mp4"
+        else VIDEOS_DIR / OUTPUT_SUBDIR / f"{title}.mp4"
     )
     print(f"📁 Output: {output}")
 
