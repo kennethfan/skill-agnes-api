@@ -91,6 +91,10 @@ INFO_FONT_SIZE = 26
 NARRATOR_VOICE = "zh-CN-YunxiaNeural"
 EDGE_TTS_RATE = "-30%"
 
+# Overridable via CLI
+OUTPUT_SUBDIR = "诗歌朗诵"   # override: --subdir
+TITLE_TTS_FMT = "{title}，{author}"  # override: --title-tts ({title}/{author} 占位符)
+
 # Style suffix for AGNES prompts (same as existing poetry scripts)
 STYLE_SUFFIX = (
     ", children's book illustration style, vibrant colors,"
@@ -441,7 +445,7 @@ def stage2_prepare(
 
     title_audio = temp_dir / "audio_title.mp3"
     if not title_audio.exists():
-        title_voice_text = f"{title}，{author}"
+        title_voice_text = TITLE_TTS_FMT.format(title=title, author=author)
         _generate_audio(title_voice_text, voice, title_audio)
     dur_t = _audio_duration(title_audio)
     print(f"   Title audio: {dur_t:.2f}s")
@@ -570,6 +574,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-stage", type=int, choices=[1, 2], help="跳过某阶段")
     p.add_argument("--workers", type=int, default=None,
                    help="AGNES API 并发数（默认 3）")
+    p.add_argument("--subdir", default=None,
+                   help="输出子目录相对 videos/（默认: 诗歌朗诵）")
+    p.add_argument("--title-tts", default=None,
+                   help="标题卡 TTS 文案模板，可用 {title}/{author} 占位符（默认: {title}，{author}）")
+    p.add_argument("--style-suffix", default=None,
+                   help="AGNES prompt 风格后缀（默认: children's book illustration style…）")
+    p.add_argument("--width", type=int, default=None, help="视频宽度（默认 720）")
+    p.add_argument("--height", type=int, default=None, help="视频高度（默认 1280）")
+    p.add_argument("--size", default=None, help="AGNES 图片尺寸（默认 2K）")
+    p.add_argument("--ratio", default=None, help="AGNES 图片宽高比（默认 9:16）")
+    p.add_argument("--model", default=None, help="AGNES 图片模型（默认 agnes-image-2.1-flash）")
+    p.add_argument("--font", default=None, help="字体文件路径（默认 PingFang.ttc）")
+    p.add_argument("--subtitle-size", type=int, default=None, help="字幕字号（默认 42）")
+    p.add_argument("--title-size", type=int, default=None, help="标题字号（默认 64）")
+    p.add_argument("--narrator-voice", default=None, help="旁白语音（默认 zh-CN-YunxiaNeural）")
+    p.add_argument("--rate", default=None, help="edge-tts 语速（默认 -30%%）")
     return p.parse_args()
 
 
@@ -580,9 +600,38 @@ def main() -> None:
     if args.work_dir:
         _set_work_dir(Path(args.work_dir))
 
-    global AGNES_MAX_WORKERS
+    global AGNES_MAX_WORKERS, AGNES_SIZE, AGNES_MODEL, AGNES_RATIO
+    global VIDEO_WIDTH, VIDEO_HEIGHT, FONT_PATH
+    global SUBTITLE_FONT_SIZE, TITLE_FONT_SIZE, NARRATOR_VOICE
+    global EDGE_TTS_RATE, OUTPUT_SUBDIR, TITLE_TTS_FMT, STYLE_SUFFIX
     if args.workers is not None:
         AGNES_MAX_WORKERS = args.workers
+    if args.width is not None:
+        VIDEO_WIDTH = args.width
+    if args.height is not None:
+        VIDEO_HEIGHT = args.height
+    if args.size is not None:
+        AGNES_SIZE = args.size
+    if args.ratio is not None:
+        AGNES_RATIO = args.ratio
+    if args.model is not None:
+        AGNES_MODEL = args.model
+    if args.font is not None:
+        FONT_PATH = args.font
+    if args.subtitle_size is not None:
+        SUBTITLE_FONT_SIZE = args.subtitle_size
+    if args.title_size is not None:
+        TITLE_FONT_SIZE = args.title_size
+    if args.narrator_voice is not None:
+        NARRATOR_VOICE = args.narrator_voice
+    if args.rate is not None:
+        EDGE_TTS_RATE = args.rate
+    if args.subdir is not None:
+        OUTPUT_SUBDIR = args.subdir
+    if args.title_tts is not None:
+        TITLE_TTS_FMT = args.title_tts
+    if args.style_suffix is not None:
+        STYLE_SUFFIX = args.style_suffix
 
     # Resolve YAML
     yaml_path = Path(args.yaml)
@@ -632,7 +681,7 @@ def main() -> None:
     output = (
         Path(args.output)
         if args.output
-        else VIDEOS_DIR / "诗歌朗诵" / f"{title}.mp4"
+        else VIDEOS_DIR / OUTPUT_SUBDIR / f"{title}.mp4"
     )
     print(f"📁 Output: {output}")
 

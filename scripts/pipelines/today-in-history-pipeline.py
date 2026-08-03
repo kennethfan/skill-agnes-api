@@ -62,6 +62,11 @@ AGNES_RATIO = "16:9"
 AGNES_MAX_WORKERS = 5
 AGNES_RETRIES = 3
 
+# Overridable via CLI
+OUTPUT_SUBDIR = "历史上的今天"      # override: --subdir
+TAG_LINE = "历史上的今天"           # override: --tagline
+TITLE_TTS_FMT = "{title}，让我们一起了解历史。"  # override: --title-tts ({title} 占位符)
+
 # Video — 16:9 landscape
 VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
@@ -356,7 +361,7 @@ def _create_title_card(title: str, date_str: str, bg_img: Image.Image | None) ->
     draw.text((sx, sy), date_text, font=sf, fill=(200, 200, 200))
 
     # Tag line
-    tag_text = "历史上的今天"
+    tag_text = TAG_LINE
     tb = draw.textbbox((0, 0), tag_text, font=sf)
     tg_x = (bg.width - (tb[2] - tb[0])) // 2
     tg_y = sy + SUB_TITLE_FONT_SIZE + 16
@@ -410,7 +415,7 @@ def stage2_prepare(
 
     title_audio = temp_dir / "audio_title.mp3"
     if not title_audio.exists():
-        tts_text = f"{title}，让我们一起了解历史。"
+        tts_text = TITLE_TTS_FMT.format(title=title)
         _generate_audio(tts_text, NARRATOR_VOICE, title_audio)
     dur_t = _audio_duration(title_audio)
     print(f"   Title audio: {dur_t:.2f}s")
@@ -542,6 +547,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-stage", type=int, choices=[1, 2], help="跳过某阶段")
     p.add_argument("--workers", type=int, default=None,
                    help="AGNES API 并发数（默认 5）")
+    p.add_argument("--subdir", default=None,
+                   help="输出子目录相对 videos/（默认: 历史上的今天）")
+    p.add_argument("--tagline", default=None,
+                   help="标题卡横幅文字（默认: 历史上的今天）")
+    p.add_argument("--title-tts", default=None,
+                   help="标题卡 TTS 文案模板，可用 {title} 占位符（默认: {title}，让我们一起了解历史。）")
+    p.add_argument("--width", type=int, default=None, help="视频宽度（默认 1920）")
+    p.add_argument("--height", type=int, default=None, help="视频高度（默认 1080）")
+    p.add_argument("--size", default=None, help="AGNES 图片尺寸（默认 2K）")
+    p.add_argument("--ratio", default=None, help="AGNES 图片宽高比（默认 16:9）")
+    p.add_argument("--model", default=None, help="AGNES 图片模型（默认 agnes-image-2.1-flash）")
+    p.add_argument("--font", default=None, help="字体文件路径（默认 PingFang.ttc）")
+    p.add_argument("--subtitle-size", type=int, default=None, help="字幕字号（默认 40）")
+    p.add_argument("--title-size", type=int, default=None, help="标题字号（默认 80）")
+    p.add_argument("--narrator-voice", default=None, help="旁白语音（默认 zh-CN-YunxiaNeural）")
+    p.add_argument("--rate", default=None, help="edge-tts 语速（默认 -30%%）")
     return p.parse_args()
 
 
@@ -552,9 +573,38 @@ def main() -> None:
     if args.work_dir:
         _set_work_dir(Path(args.work_dir))
 
-    global AGNES_MAX_WORKERS
+    global AGNES_MAX_WORKERS, AGNES_SIZE, AGNES_MODEL, AGNES_RATIO
+    global VIDEO_WIDTH, VIDEO_HEIGHT, FONT_PATH
+    global SUBTITLE_FONT_SIZE, TITLE_FONT_SIZE, NARRATOR_VOICE
+    global EDGE_TTS_RATE, OUTPUT_SUBDIR, TAG_LINE, TITLE_TTS_FMT
     if args.workers is not None:
         AGNES_MAX_WORKERS = args.workers
+    if args.width is not None:
+        VIDEO_WIDTH = args.width
+    if args.height is not None:
+        VIDEO_HEIGHT = args.height
+    if args.size is not None:
+        AGNES_SIZE = args.size
+    if args.ratio is not None:
+        AGNES_RATIO = args.ratio
+    if args.model is not None:
+        AGNES_MODEL = args.model
+    if args.font is not None:
+        FONT_PATH = args.font
+    if args.subtitle_size is not None:
+        SUBTITLE_FONT_SIZE = args.subtitle_size
+    if args.title_size is not None:
+        TITLE_FONT_SIZE = args.title_size
+    if args.narrator_voice is not None:
+        NARRATOR_VOICE = args.narrator_voice
+    if args.rate is not None:
+        EDGE_TTS_RATE = args.rate
+    if args.subdir is not None:
+        OUTPUT_SUBDIR = args.subdir
+    if args.tagline is not None:
+        TAG_LINE = args.tagline
+    if args.title_tts is not None:
+        TITLE_TTS_FMT = args.title_tts
 
     # --- Validate date ---
     date = args.date
@@ -588,7 +638,7 @@ def main() -> None:
     output = (
         Path(args.output)
         if args.output
-        else VIDEOS_DIR / "历史上的今天" / f"历史上的今天{date}.mp4"
+        else VIDEOS_DIR / OUTPUT_SUBDIR / f"历史上的今天{date}.mp4"
     )
     print(f"📁 Output: {output}")
 
