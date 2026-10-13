@@ -263,8 +263,8 @@ python3 scripts/pipelines/today-in-history-pipeline.py
 | Item | Value |
 |------|-------|
 | Base URL | `https://apihub.agnes-ai.com` |
-| Image Model | `agnes-image-2.1-flash` |
-| Video Model | `agnes-video-v2.0` |
+| Image Model | `agnes-image-2.5-flash` |
+| Video Model | `agnes-video-2.5-flash` |
 | Auth | `Authorization: Bearer <API_KEY>` |
 
 ### Image Sizes

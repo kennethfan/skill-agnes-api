@@ -39,7 +39,7 @@ AGNES API 提供了图生图 (i2i) 能力，可以基于输入图片 + 文本指
 
 ### 6. 引擎
 
-全部操作基于 AGNES i2i API（`agnes-image-2.1-flash`），通过文本指令驱动，不引入传统图像处理库。
+全部操作基于 AGNES i2i API（`agnes-image-2.5-flash`），通过文本指令驱动，不引入传统图像处理库。
 
 ## 备选方案
 

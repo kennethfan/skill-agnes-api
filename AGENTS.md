@@ -91,7 +91,7 @@ OpenCode agent skill for AGNES API (apihub.agnes-ai.com) — generate images/vid
 - **Paths config**: `~/.config/agnes/paths.yaml` — all output/tool paths via `utils._cfg()`
 - **Project isolation**: `--project name` → `~/agent/media/projects/<name>/` with scene/panel/audio subdirs
 - **Pipeline scripts**: `scripts/pipelines/` — self-contained checkpoint-based pipelines (not library-safe)
-- **API version**: `agnes-image-2.1-flash` (image), `agnes-video-v2.0` (video)
+- **API version**: `agnes-image-2.5-flash` (image), `agnes-video-2.5-flash` (video)
 - **No tests, no requirements.txt, no CI**
 
 ## ANTI-PATTERNS

@@ -263,8 +263,8 @@ python3 scripts/pipelines/today-in-history-pipeline.py
 | 项目 | 值 |
 |------|-----|
 | Base URL | `https://apihub.agnes-ai.com` |
-| 图片模型 | `agnes-image-2.1-flash` |
-| 视频模型 | `agnes-video-v2.0` |
+| 图片模型 | `agnes-image-2.5-flash` |
+| 视频模型 | `agnes-video-2.5-flash` |
 | Auth | `Authorization: Bearer <API_KEY>` |
 
 ### 图片参数
