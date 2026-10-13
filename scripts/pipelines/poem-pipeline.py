@@ -50,6 +50,9 @@ from urllib.error import HTTPError, URLError
 from PIL import Image, ImageDraw, ImageFont
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from utils import get_image_model  # noqa: E402
+
 # ═══════════════════════════════════════════════════════════════════════
 # Config
 # ═══════════════════════════════════════════════════════════════════════
@@ -74,7 +77,7 @@ def _set_work_dir(wd: Path) -> None:
 
 # AGNES
 AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
-AGNES_MODEL = "agnes-image-2.5-flash"
+AGNES_MODEL = get_image_model()
 AGNES_KEY_FILE = Path.home() / ".config" / "agnes" / "key"
 AGNES_SIZE = "2K"
 AGNES_RATIO = "9:16"          # portrait for poetry vertical video
@@ -616,7 +619,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--height", type=int, default=None, help="视频高度（默认 1280）")
     p.add_argument("--size", default=None, help="AGNES 图片尺寸（默认 2K）")
     p.add_argument("--ratio", default=None, help="AGNES 图片宽高比（默认 9:16）")
-    p.add_argument("--model", default=None, help="AGNES 图片模型（默认 agnes-image-2.5-flash）")
+    p.add_argument("--model", default=None, help="AGNES 图片模型（默认取 paths.yaml 的 image_model）")
     p.add_argument("--font", default=None, help="字体文件路径（默认 PingFang.ttc）")
     p.add_argument("--subtitle-size", type=int, default=None, help="字幕字号（默认 42）")
     p.add_argument("--title-size", type=int, default=None, help="标题字号（默认 64）")
