@@ -11,7 +11,7 @@ client = ImageClient()
 data = client.post(
     "/v1/images/generations",
     {
-        "model": "agnes-image-2.1-flash",
+        "model": "agnes-image-2.5-flash",
         "prompt": "Combine the two characters into an intense fantasy battle scene, dynamic lighting, detailed background, cinematic composition",
         "size": "1024x768",
         "extra_body": {

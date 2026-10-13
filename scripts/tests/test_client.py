@@ -23,7 +23,7 @@ class TestImageClientT2I:
         client.post.assert_called_once()
         _path, body = client.post.call_args[0]
         assert body == {
-            "model": "agnes-image-2.1-flash",
+            "model": "agnes-image-2.5-flash",
             "prompt": "a cat",
             "size": "1024x768",
         }
@@ -108,7 +108,7 @@ class TestImageClientI2I:
 
         client.post.assert_called_once()
         _path, body = client.post.call_args[0]
-        assert body["model"] == "agnes-image-2.1-flash"
+        assert body["model"] == "agnes-image-2.5-flash"
         assert body["prompt"] == "make it vibrant"
         assert body["size"] == "1024x768"
         assert body["extra_body"]["image"] == ["data:image/png;base64,abc"]

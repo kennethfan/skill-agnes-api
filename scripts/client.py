@@ -62,7 +62,7 @@ class ImageClient(AgnesClient):
     """图片生成客户端（t2i / i2i）。"""
 
     API_PATH = "/v1/images/generations"
-    MODEL = "agnes-image-2.1-flash"
+    MODEL = "agnes-image-2.5-flash"
 
     def t2i(
         self,

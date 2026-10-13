@@ -12,7 +12,7 @@ client = ImageClient()
 data = client.post(
     "/v1/images/generations",
     {
-        "model": "agnes-image-2.1-flash",
+        "model": "agnes-image-2.5-flash",
         "prompt": "A clean product photo of a glass cube on a white studio background, soft shadows, high detail",
         "size": "1024x768",
         "return_base64": True,
