@@ -44,6 +44,21 @@ scenes:
       - text: "鹅，鹅，鹅，曲项向天歌。"
 ```
 
+### 读音修正示例（多音字/古音）
+
+```yaml
+  - description: >-
+      A mountain path winding through autumn forests, red leaves, misty clouds
+    dialogues:
+      - text: "远上寒山石径斜，白云深处有人家。"
+        # 斜在古诗中读 xiá（古音），但 edge-tts 默认读 xié
+        # 用同音字"霞"替换，音频读 xiá，字幕仍显示"斜"
+        pronounce:
+          - word: "斜"
+            replace_with: "霞"
+      - text: "停车坐爱枫林晚，霜叶红于二月花。"
+```
+
 ### 字段说明
 
 | 字段 | 要求 |
@@ -54,6 +69,7 @@ scenes:
 | `voice` | 可选。edge-tts 语音名称，默认 `zh-CN-YunxiaNeural` |
 | `scenes[].description` | **英文**场景描述，作为 AGNES t2i 的 prompt。自动追加 `children's book illustration style` 风格后缀 |
 | `scenes[].dialogues[].text` | 诗句文本。每句单独一条，字幕居中显示（无角色前缀） |
+| `scenes[].dialogues[].pronounce` | 可选。**读音修正**：edge-tts 对多音字/古音常读错，用同音字替换朗读文本。每项 `{word, replace_with}`——TTS 朗读时把 `word` 换成 `replace_with` 同音字，但字幕仍显示 `text` 原文。例：`不教胡马度阴山` + `{word:"教", replace_with:"交"}` → 音频读"不交…"（jiāo），字幕仍为"教" |
 
 **兼容旧格式**：如果 YAML 使用 `lines` 字段（旧格式），管线会自动转换为 `scenes→dialogues` 格式。
 

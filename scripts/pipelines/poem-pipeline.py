@@ -16,6 +16,12 @@ YAML 格式（scenes→dialogues）:
     - description: "Scene description for AGNES"
       dialogues:
         - text: "鹅，鹅，鹅，曲项向天歌。"
+        # 读音修正: 可选。edge-tts 对多音字/古音常读错，
+        # 用同音字替换朗读文本（字幕仍显示原文 text）
+        - text: "但使龙城飞将在，不教胡马度阴山。"
+          pronounce:
+            - word: "教"          # 原文中的字
+              replace_with: "交"  # 同音字（TTS 朗读"不交…"→读 jiāo）
     - description: "..."
       dialogues:
         - text: "白毛浮绿水，红掌拨清波。"
@@ -408,9 +414,33 @@ def _audio_duration(path: Path) -> float:
     return float(r.stdout.strip())
 
 
-def _generate_audio(text: str, voice: str, out: Path) -> None:
+def _apply_pronounce(text: str, pronounce: list[dict] | None) -> str:
+    """
+    将文本中需修正读音的字替换为同音字（TTS 输入用）。
+
+    例: text="不教胡马度阴山", pronounce=[{word:"教", replace_with:"交"}]
+        → "不交胡马度阴山"（音频读 jiāo，字幕仍显示原文"教"）
+    """
+    if not pronounce:
+        return text
+    result = text
+    # 长词优先替换，避免短词先替换破坏长词匹配
+    for p in sorted(pronounce, key=lambda x: len(x.get("word", "")), reverse=True):
+        word = p.get("word", "")
+        repl = p.get("replace_with", "")
+        if word and repl and repl != word:
+            result = result.replace(word, repl)
+    return result
+
+
+def _generate_audio(text: str, voice: str, out: Path, tts_text: str | None = None) -> None:
+    """
+    生成 TTS 音频。若提供 tts_text（同音字替换后的文本）则用它朗读，
+    否则用原文 text。
+    """
+    audio_text = tts_text if tts_text is not None else text
     subprocess.run(
-        ["edge-tts", "--voice", voice, "--text", text,
+        ["edge-tts", "--voice", voice, "--text", audio_text,
          "--write-media", str(out), f"--rate={EDGE_TTS_RATE}"],
         check=True, capture_output=True, timeout=120,
     )
@@ -472,6 +502,7 @@ def stage2_prepare(
 
         for di, dlg in enumerate(dlg_list):
             text = dlg.get("text", "")
+            pronounce = dlg.get("pronounce", None)
             tag = f"s{sn:02d}_d{di:02d}"
 
             print(f"   💬  {text[:40]}…")
@@ -482,7 +513,8 @@ def stage2_prepare(
 
             ap = temp_dir / f"audio_{tag}.mp3"
             if not ap.exists():
-                _generate_audio(text, voice, ap)
+                tts_text = _apply_pronounce(text, pronounce)
+                _generate_audio(text, voice, ap, tts_text=tts_text)
 
             dur = _audio_duration(ap)
             segments.append((fp, ap, dur))
