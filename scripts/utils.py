@@ -198,6 +198,16 @@ def get_font_path() -> str:
     return ""
 
 
+def get_image_model() -> str:
+    """图片模型名，取 paths.yaml 的 image_model，缺省 agnes-image-2.5-flash。"""
+    return _cfg("image_model", "agnes-image-2.5-flash")
+
+
+def get_video_model() -> str:
+    """视频模型名，取 paths.yaml 的 video_model，缺省 agnes-video-2.5-flash。"""
+    return _cfg("video_model", "agnes-video-2.5-flash")
+
+
 # ─── 向后兼容 ──────────────────────────────────────────
 
 # 旧脚本无 project 概念时使用的兜底目录
