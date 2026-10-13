@@ -145,13 +145,13 @@ Stage 3 — 视频合成
 |------|------|
 | `story-pipeline.py` | 统一三阶段管线（推荐） |
 
-该管线通过 `agnes-api` skill 提供的 AGNES API（`agnes-image-2.1-flash` 模型）完成图片生成。
+该管线通过 `agnes-api` skill 提供的 AGNES API（`agnes-image-2.5-flash` 模型）完成图片生成。
 
 ## 依赖
 
 | 工具 | 用途 | 验证 |
 |------|------|------|
-| AGNES API (`agnes-image-2.1-flash`) | 图片生成 | `agnes-api` skill |
+| AGNES API (`agnes-image-2.5-flash`) | 图片生成 | `agnes-api` skill |
 | `edge-tts` | 中文语音合成（多角色） | `pip3 install edge-tts` |
 | `Pillow` | 字幕渲染 | `pip3 install Pillow` |
 | `ffmpeg` (含 libx264 + aac) | 视频合成 | `ffmpeg -version` |

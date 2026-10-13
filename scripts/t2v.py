@@ -1,14 +1,13 @@
-"""文生视频 (Text-to-Video) — 使用 VideoClient"""
+"""文生视频 (Text-to-Video) — 使用 VideoClient (Video 2.5 Flash)"""
 
-import json
 from client import VideoClient
 
 client = VideoClient()
 task_id = client.create({
     "prompt": "A cinematic shot of a cat walking on the beach at sunset, soft ocean waves, warm golden lighting, realistic motion",
-    "height": 768,
-    "width": 1152,
-    "num_frames": 121,
-    "frame_rate": 24,
+    "mode": "text",
+    "size": "720P",
+    "aspect_ratio": "16:9",
+    "seconds": "5",
 })
 print(f"Task ID: {task_id}")

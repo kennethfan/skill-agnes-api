@@ -3,7 +3,7 @@
 import time
 from pathlib import Path
 from client import ImageClient
-from utils import get_default_dir
+from utils import get_default_dir, get_image_model
 
 OUTPUT_DIR = get_default_dir()
 
@@ -11,7 +11,7 @@ client = ImageClient()
 data = client.post(
     "/v1/images/generations",
     {
-        "model": "agnes-image-2.1-flash",
+        "model": get_image_model(),
         "prompt": "Combine the two characters into an intense fantasy battle scene, dynamic lighting, detailed background, cinematic composition",
         "size": "1024x768",
         "extra_body": {

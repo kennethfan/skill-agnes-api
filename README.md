@@ -62,6 +62,8 @@ python3 scripts/check_key.py
 | `ffmpeg_bin` | ffmpeg 路径 | `ffmpeg`（走 PATH） |
 | `ffprobe_bin` | ffprobe 路径 | `ffprobe`（走 PATH） |
 | `font_paths` | 中文字体路径列表（按序查找） | `[]`（自动回退） |
+| `image_model` | 图片模型名 | `agnes-image-2.5-flash` |
+| `video_model` | 视频模型名 | `agnes-video-2.5-flash` |
 | `cleanup.prompt` | 是否询问清理中间文件 | `true` |
 | `cleanup.default_yes` | 清理默认回答 | `true` |
 
@@ -74,6 +76,8 @@ ffmpeg_bin: /opt/homebrew/bin/ffmpeg
 font_paths:
   - /System/Library/Fonts/PingFang.ttc
   - /System/Library/Fonts/STHeiti Light.ttc
+image_model: agnes-image-2.5-flash
+video_model: agnes-video-2.5-flash
 cleanup:
   prompt: true
   default_yes: true
@@ -263,8 +267,8 @@ python3 scripts/pipelines/today-in-history-pipeline.py
 | 项目 | 值 |
 |------|-----|
 | Base URL | `https://apihub.agnes-ai.com` |
-| 图片模型 | `agnes-image-2.1-flash` |
-| 视频模型 | `agnes-video-v2.0` |
+| 图片模型 | `agnes-image-2.5-flash` |
+| 视频模型 | `agnes-video-2.5-flash` |
 | Auth | `Authorization: Bearer <API_KEY>` |
 
 ### 图片参数

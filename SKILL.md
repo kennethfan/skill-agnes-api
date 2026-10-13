@@ -38,8 +38,6 @@ allowed-tools: Bash, Read, Write, Edit
 |------|------|
 | `@scripts/client.py` | 三层客户端：`AgnesClient`(HTTP 传输 + key rotation) → `ImageClient`(t2i/i2i) / `VideoClient`(create/poll) |
 
-所有脚本均通过 client.py 访问 API，自动处理 key 轮转和限流重试。
-
 ```python
 from client import ImageClient, VideoClient
 
@@ -52,13 +50,33 @@ task_id = vid.create({"prompt": "...", ...})
 result = vid.poll(task_id)
 ```
 
+**⚠️ 重要：poll 端点**
+
+`VideoClient.poll()` 使用 Video 2.5 Flash 的推荐端点：
+
+```
+GET /agnesapi?video_id={task_id}&model_name=agnes-video-2.5-flash
+```
+
+手动 poll 示例：
+```python
+from urllib.parse import urlencode
+from client import AgnesClient
+
+ac = AgnesClient()
+data = ac.get(f"/agnesapi?{urlencode({'video_id': task_id, 'model_name': 'agnes-video-2.5-flash'})}")
+# 返回: {"status": "completed", "metadata": {"url": "..."}, "progress": 100}
+```
+
+状态值：`queued` → `in_progress` → `completed` / `failed`
+
 ---
 
 ## 能力总览
 
 ### 图片生成
 
-**端点**: `POST /v1/images/generations` | **模型**: `agnes-image-2.1-flash`
+**端点**: `POST /v1/images/generations` | **模型**: `agnes-image-2.5-flash`
 
 | 脚本 | 用途 |
 |------|------|
@@ -106,7 +124,7 @@ result = vid.poll(task_id)
 
 ### 视频生成 (Video)
 
-**端点**: `POST /v1/videos` | **模型**: `agnes-video-v2.0`
+**端点**: `POST /v1/videos` | **模型**: `agnes-video-2.5-flash`
 **注意**: 异步 — 创建任务 → 轮询结果
 
 | 脚本 | 用途 |
@@ -121,20 +139,27 @@ result = vid.poll(task_id)
 
 | 参数 | 说明 |
 |------|------|
-| `num_frames` | 总帧数，≤ 441，必须满足 `8n + 1` 规则 |
-| `frame_rate` | 帧率，1-60 |
-| `height` / `width` | 会被归一化到 480p/720p/1080p 档位 |
+| `mode` | 生成模式: `text`(文生视频), `keyframe`(关键帧控制), `reference`(参考图/音频) |
+| `size` | 输出分辨率: `720P` (Flash 仅支持 720P) |
+| `aspect_ratio` | 宽高比: `16:9`, `9:16`, `1:1`, `4:3`, `3:4`, `21:9` |
+| `seconds` | 时长: `"4"` - `"12"` 秒（字符串） |
 | `seed` | 固定随机种子，可复现结果 |
-| `negative_prompt` | 负面提示词 |
 
-**常用时长**:
+**mode 参数**:
 
-| 目标时长 | num_frames | frame_rate |
-|----------|------------|------------|
-| ~3秒 | 81 | 24 |
-| ~5秒 | 121 | 24 |
-| ~10秒 | 241 | 24 |
-| ~18秒 | 441 | 24 |
+| mode | 用途 | 必需媒体 | 禁用媒体 |
+|------|------|---------|---------|
+| `text` | 文生视频 | 无 | first_frame, last_frame, images, audios, videos |
+| `keyframe` | 首尾帧控制 | first_frame 或 last_frame | images, audios, videos |
+| `reference` | 图片/音频参考 | images 或 audios 数组 | first_frame, last_frame |
+
+**Flash 限制**:
+- 仅支持 `720P`
+- 参考图片最多5张
+- 参考音频最多3条
+- 不支持视频参考
+
+**i2v 速度**: 每个片段约5分钟，14张图约70分钟。批量生成建议使用 Ken Burns 作为快速替代。
 
 ---
 
@@ -142,8 +167,9 @@ result = vid.poll(task_id)
 
 | 状态码 | 含义 |
 |--------|------|
-| 400 | 请求参数错误 |
+| 400 | 请求参数错误 / poll 端点错误（见上方重要提示） |
 | 401 | API key 无效 |
 | 404 | 任务/视频不存在 |
+| 429 | 限流，需等待冷却（30-60秒） |
 | 500 | 服务器错误 |
 | 503 | 服务繁忙，稍后重试 |

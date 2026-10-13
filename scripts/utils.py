@@ -198,6 +198,16 @@ def get_font_path() -> str:
     return ""
 
 
+def get_image_model() -> str:
+    """图片模型名，取 paths.yaml 的 image_model，缺省 agnes-image-2.5-flash。"""
+    return _cfg("image_model", "agnes-image-2.5-flash")
+
+
+def get_video_model() -> str:
+    """视频模型名，取 paths.yaml 的 video_model，缺省 agnes-video-2.5-flash。"""
+    return _cfg("video_model", "agnes-video-2.5-flash")
+
+
 # ─── 向后兼容 ──────────────────────────────────────────
 
 # 旧脚本无 project 概念时使用的兜底目录
@@ -207,14 +217,39 @@ OUTPUT_DIR_VIDEOS = get_default_dir()
 
 # ─── Key Pool（多 key 轮转限流） ───────────────────────────
 
+# 主动限速预算默认值（每 key 每滚动 60s 窗口内的最大请求数）。
+# 基于 Free 档硬限制 × 80% 余量；硬限制为 1 的档位贴上限。
+# 可通过 paths.yaml 的 key_budget_<family>（如 key_budget_image_1k）覆盖。
+_BUDGET_DEFAULTS: dict[str, int] = {
+    "text": 8,
+    "image-1k": 8,
+    "image-2k": 4,
+    "image-3k": 1,
+    "image-4k": 1,
+    "video": 1,
+    "video_poll": 30,
+}
+
+_BUDGET_WINDOW_SECONDS = 60.0
+_COOLDOWN_CAP_SECONDS = 300.0
+
+
 class KeyPool:
-    """Round-robin API key pool with automatic cooldown on 503."""
+    """Round-robin API key pool with escalating cooldown + proactive rate budgets.
+
+    被动层：429/503 → 冷却（升级退避 60→120→240→300s，成功一次重置）；
+    主动层：每 key 按模型族维护滚动 60s 窗口预算，接近上限时主动跳过。
+    """
 
     def __init__(self):
         self._keys: list[str] = []
         self._loaded = False
         self._index = 0
-        self._cooldowns: dict[int, float] = {}
+        self._cooldowns: dict[tuple[int, str | None], float] = {}
+        # 连续限流次数（升级退避用），成功一次即删除；按 (key, family) 独立计数
+        self._strikes: dict[tuple[int, str | None], int] = {}
+        # (key_index, family) → 最近请求时间戳列表（滚动窗口预算）
+        self._budget_log: dict[tuple[int, str], list[float]] = {}
 
     def _ensure_loaded(self):
         if self._loaded:
@@ -230,36 +265,144 @@ class KeyPool:
             )
         self._loaded = True
 
-    def acquire(self) -> tuple[str, int]:
-        """Get the next available key. Returns (key_string, key_index)."""
-        self._ensure_loaded()
-        now = _time.time()
-        expired = [idx for idx, until in list(self._cooldowns.items()) if now >= until]
-        for idx in expired:
-            del self._cooldowns[idx]
+    @staticmethod
+    def _budget_for(family: str) -> int:
+        """查询某模型族的每 key 预算，paths.yaml 可覆盖。"""
+        cfg_key = "key_budget_" + family.replace("-", "_")
+        return int(_cfg(cfg_key, _BUDGET_DEFAULTS.get(family, 8)))
 
+    def _has_budget(self, key_index: int, family: str, now: float) -> bool:
+        """检查 key 在该模型族的滚动窗口内是否仍有预算。"""
+        limit = self._budget_for(family)
+        log = self._budget_log.get((key_index, family), [])
+        in_window = [t for t in log if now - t < _BUDGET_WINDOW_SECONDS]
+        return len(in_window) < limit
+
+    def _record(self, key_index: int, family: str | None, now: float):
+        """请求发出时记录时间戳（RPM 按服务端收到的请求计数，故在 acquire 时记账）。"""
+        if family is None:
+            return
+        log = self._budget_log.setdefault((key_index, family), [])
+        log.append(now)
+        cutoff = now - _BUDGET_WINDOW_SECONDS
+        self._budget_log[(key_index, family)] = [t for t in log if t >= cutoff]
+
+    def _purge_expired(self, now: float):
+        """清理已到期的冷却条目（只删过期，从不清有效冷却）。"""
+        expired = [k for k, until in self._cooldowns.items() if now >= until]
+        for k in expired:
+            del self._cooldowns[k]
+
+    def _cooldown_until(self, key_index: int, family: str | None, now: float) -> float:
+        """某 key 对该模型族的冷却到期时刻（0 表示无有效冷却）。
+
+        全局冷却（family=None，由 503 写入）对所有模型族生效。
+        """
+        latest = 0.0
+        for (idx, fam), until in self._cooldowns.items():
+            if idx == key_index and (fam is None or fam == family) and until > now:
+                latest = max(latest, until)
+        return latest
+
+    def _budget_free_at(self, key_index: int, family: str, now: float) -> float:
+        """该 key 在此模型族预算恢复的时刻（0 表示当前有预算）。"""
+        window = [
+            t for t in self._budget_log.get((key_index, family), [])
+            if now - t < _BUDGET_WINDOW_SECONDS
+        ]
+        limit = self._budget_for(family)
+        if len(window) < limit:
+            return 0.0
+        return window[len(window) - limit] + _BUDGET_WINDOW_SECONDS
+
+    def _earliest_unblock_wait(self, family: str | None, now: float) -> float:
+        """全部 key 被阻塞时，计算最早有 key 可用的等待秒数。
+
+        每把 key 的可用时刻 = max(冷却到期, 预算窗口滑出)，取所有 key 的
+        最早时刻。sleep 到该时刻后至少一把 key 可用，因此不再清空冷却——
+        旧逻辑「取 min + 睡后强清」是 429 风暴（strike 虚增到 7/8）的根因。
+        """
+        waits = []
+        for idx in range(len(self._keys)):
+            usable_at = self._cooldown_until(idx, family, now)
+            if family:
+                usable_at = max(usable_at, self._budget_free_at(idx, family, now))
+            waits.append(max(0.1, usable_at - now))
+        return min(waits) if waits else 1.0
+
+    def acquire(self, family: str | None = None) -> tuple[str, int]:
+        """Get the next available key. Returns (key_string, key_index).
+
+        family: 模型族（text / image-1k / video / video_poll 等），
+        传入时启用主动预算检查；None 则只检查冷却（兼容旧行为）。
+        """
+        self._ensure_loaded()
         n = len(self._keys)
-        for _ in range(n * 2):
-            idx = self._index % n
-            self._index += 1
-            if idx not in self._cooldowns:
+        # 正常情况下一次等待后必有 key 可用；60 轮是纯兜底，实际到不了
+        for _ in range(60):
+            now = _time.time()
+            self._purge_expired(now)
+            for _ in range(n * 2):
+                idx = self._index % n
+                self._index += 1
+                if self._cooldown_until(idx, family, now) > 0:
+                    continue
+                if family and not self._has_budget(idx, family, now):
+                    continue
+                self._record(idx, family, now)
                 return self._keys[idx], idx
 
-        earliest = min(self._cooldowns.values())
-        wait = max(0.1, earliest - now)
-        print(f"  All {n} keys rate-limited, waiting {wait:.0f}s...")
-        _time.sleep(wait)
-        self._cooldowns.clear()
-        idx = self._index % n
-        self._index += 1
-        return self._keys[idx], idx
+            # 全部 key 被冷却或预算耗尽：等最早可用的 key，醒来后重扫。
+            # 只清理已过期冷却，绝不清有效冷却（旧强清逻辑是 429 风暴根因）。
+            wait = self._earliest_unblock_wait(family, now)
+            label = f" ({family})" if family else ""
+            print(f"  All {n} keys at capacity{label}, waiting {wait:.0f}s...")
+            _time.sleep(wait)
+        raise RuntimeError("Key pool exhausted: no key became available after waiting")
 
-    def report_503(self, key_index: int):
-        """Mark a key as rate-limited. It enters cooldown for key_cooldown_seconds."""
-        cooldown = _cfg("key_cooldown_seconds", 30)
-        self._cooldowns[key_index] = _time.time() + cooldown
-        available = len(self._keys) - len(self._cooldowns)
-        print(f"  Key {key_index} rate-limited, cooling {cooldown}s ({available}/{len(self._keys)} keys available)")
+    def report_rate_limited(self, key_index: int, retry_after: str | int | None = None,
+                            family: str | None = None):
+        """Mark a key as rate-limited (429/503)。
+
+        family：被限流的模型族（429 按类型池限流，只冷却该族）；
+        None 表示全局冷却（503 服务繁忙，对所有族生效）。
+        升级退避按 (key, family) 独立计数：base → base×2 → base×4 → 封顶 300s；
+        成功一次（report_success）重置。Retry-After 头存在时优先使用其秒数。
+        base = paths.yaml key_cooldown_seconds（默认 60）。
+        """
+        scope = (key_index, family)
+        strike = self._strikes.get(scope, 0) + 1
+        self._strikes[scope] = strike
+        cooldown = None
+        if retry_after is not None:
+            try:
+                cooldown = float(retry_after)
+            except (TypeError, ValueError):
+                cooldown = None
+        if cooldown is None or cooldown < 0:
+            base = float(_cfg("key_cooldown_seconds", 60))
+            cooldown = min(base * (2 ** (strike - 1)), _COOLDOWN_CAP_SECONDS)
+        self._cooldowns[scope] = _time.time() + cooldown
+        now = _time.time()
+        available = sum(
+            1 for idx in range(len(self._keys))
+            if self._cooldown_until(idx, family, now) <= 0
+        )
+        label = f" [{family}]" if family else " [global]"
+        print(
+            f"  Key {key_index} rate-limited{label} (strike {strike}), "
+            f"cooling {cooldown:.0f}s ({available}/{len(self._keys)} keys available)"
+        )
+
+    def report_503(self, key_index: int, retry_after: str | int | None = None):
+        """向后兼容别名：503 视为服务端全局繁忙，对该 key 全模型族冷却。"""
+        self.report_rate_limited(key_index, retry_after=retry_after, family=None)
+
+    def report_success(self, key_index: int, family: str | None = None):
+        """请求成功：重置该 key 在此模型族及全局的升级退避计数。"""
+        self._strikes.pop((key_index, family), None)
+        if family is not None:
+            self._strikes.pop((key_index, None), None)
 
     def key_count(self) -> int:
         self._ensure_loaded()
@@ -284,11 +427,14 @@ def urlopen_with_rotation(
     method: str = "POST",
     timeout: int = 60,
     max_retries: int | None = None,
+    model_family: str = "text",
 ):
-    """urlopen wrapper with automatic key rotation on HTTP 503.
+    """urlopen wrapper with automatic key rotation on rate-limit responses.
 
-    On 503: rotate to next key and retry immediately (no backoff).
+    On 429/503: rotate to next key and retry immediately (no backoff);
+    Retry-After header, when present, sets the cooldown duration.
     On other errors: exponential backoff then retry.
+    model_family: 预算模型族（text / image-1k / video / video_poll）。
     """
     pool = get_key_pool()
     if max_retries is None:
@@ -298,17 +444,26 @@ def urlopen_with_rotation(
 
     last_error: Exception | None = None
     for attempt in range(max_retries):
-        key, key_idx = pool.acquire()
+        key, key_idx = pool.acquire(family=model_family)
         hdrs = {**base_headers, "Authorization": f"Bearer {key}"}
         try:
             req = Request(url, data=data, headers=hdrs, method=method)
-            return urlopen(req, timeout=timeout)
+            resp = urlopen(req, timeout=timeout)
+            pool.report_success(key_idx, family=model_family)
+            return resp
         except HTTPError as e:
-            if e.code == 503:
-                pool.report_503(key_idx)
-                last_error = e
-                continue
-            raise
+            retry_after = e.headers.get("Retry-After") if e.headers else None
+            if e.code == 429:
+                # 429 按类型池限流：只冷却本次请求的模型族，不影响同 key 其他族
+                pool.report_rate_limited(key_idx, retry_after=retry_after,
+                                         family=model_family)
+            elif e.code == 503:
+                # 503 服务端繁忙：全局冷却该 key
+                pool.report_503(key_idx, retry_after=retry_after)
+            else:
+                raise
+            last_error = e
+            continue
         except Exception as e:
             if attempt < max_retries - 1:
                 wait = min(2 ** attempt, 30)
@@ -324,41 +479,23 @@ def urlopen_with_rotation(
 # ─── API 工具 ──────────────────────────────────────────
 
 
-def get_api_key() -> str:
-    """从 paths.yaml agnes_api_keys 的第一把 key 文件读取。"""
-    keys = _cfg("agnes_api_keys", [])
-    if not keys:
-        raise RuntimeError(
-            "No API keys configured. Set `agnes_api_keys` in your paths.yaml file."
-        )
-    path = Path(keys[0]).expanduser()
-    if not path.exists():
-        raise FileNotFoundError(f"API key file not found: {path}")
-    return path.read_text(encoding="utf-8").strip()
-
-
-def api_headers() -> dict:
-    return {
-        "Authorization": f"Bearer {get_api_key()}",
-        "Content-Type": "application/json",
-    }
-
-
-def api_post(path: str, body: dict) -> dict:
+def api_post(path: str, body: dict, model_family: str = "text") -> dict:
     """发起 POST 请求并返回解析后的 JSON（带 key rotation）。"""
     resp = urlopen_with_rotation(
         f"{BASE_URL}{path}",
         data=json.dumps(body).encode(),
         method="POST",
+        model_family=model_family,
     )
     return json.loads(resp.read())
 
 
-def api_get(path: str) -> dict:
+def api_get(path: str, model_family: str = "text") -> dict:
     """发起 GET 请求并返回解析后的 JSON（带 key rotation）。"""
     resp = urlopen_with_rotation(
         f"{BASE_URL}{path}",
         method="GET",
+        model_family=model_family,
     )
     return json.loads(resp.read())
 

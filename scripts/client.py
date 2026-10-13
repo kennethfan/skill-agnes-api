@@ -17,7 +17,13 @@ import json
 import time as _time
 from pathlib import Path
 from urllib.request import urlopen
-from utils import get_key_pool, urlopen_with_rotation
+from utils import get_image_model, get_key_pool, get_video_model, urlopen_with_rotation
+
+
+def _image_family(size: str) -> str:
+    """按 size 参数推导预算档位族（1K/2K/3K/4K），未知尺寸默认 1K 档。"""
+    tier = str(size).strip().upper()
+    return f"image-{tier.lower()}" if tier in ("1K", "2K", "3K", "4K") else "image-1k"
 
 
 class AgnesClient:
@@ -32,28 +38,31 @@ class AgnesClient:
         self._pool = get_key_pool()
         self._max_retries = max_retries
 
-    def post(self, path: str, body: dict) -> dict:
+    def post(self, path: str, body: dict, model_family: str = "text") -> dict:
         """POST 请求，返回 JSON 响应。"""
         resp = urlopen_with_rotation(
             f"{self.BASE_URL}{path}",
             data=json.dumps(body).encode(),
             method="POST",
+            timeout=180,
             max_retries=self._max_retries,
+            model_family=model_family,
         )
         return json.loads(resp.read())
 
-    def get(self, path: str) -> dict:
+    def get(self, path: str, model_family: str = "text") -> dict:
         """GET 请求，返回 JSON 响应。"""
         resp = urlopen_with_rotation(
             f"{self.BASE_URL}{path}",
             method="GET",
             max_retries=self._max_retries,
+            model_family=model_family,
         )
         return json.loads(resp.read())
 
     def download(self, url: str) -> bytes:
         """下载文件内容（CDN URL，无 key rotation）。"""
-        with urlopen(url) as resp:
+        with urlopen(url, timeout=180) as resp:
             return resp.read()
 
 
@@ -61,7 +70,6 @@ class ImageClient(AgnesClient):
     """图片生成客户端（t2i / i2i）。"""
 
     API_PATH = "/v1/images/generations"
-    MODEL = "agnes-image-2.1-flash"
 
     def t2i(
         self,
@@ -80,12 +88,12 @@ class ImageClient(AgnesClient):
             seed: 随机种子（相同 seed 复现结果）
             **body_extras: 额外 body 字段（如 extra_body、return_base64）
         """
-        body: dict = {"model": self.MODEL, "prompt": prompt, "size": size, **body_extras}
+        body: dict = {"model": get_image_model(), "prompt": prompt, "size": size, **body_extras}
         if ratio:
             body["ratio"] = ratio
         if seed is not None:
             body["seed"] = seed
-        data = self.post(self.API_PATH, body)
+        data = self.post(self.API_PATH, body, model_family=_image_family(size))
         return data["data"][0]["url"]
 
     def i2i(
@@ -112,7 +120,7 @@ class ImageClient(AgnesClient):
         extra.setdefault("response_format", "url")
         extra.setdefault("image", [image_ref])
         body: dict = {
-            "model": self.MODEL,
+            "model": get_image_model(),
             "prompt": prompt,
             "size": size,
             "extra_body": extra,
@@ -122,7 +130,7 @@ class ImageClient(AgnesClient):
             body["ratio"] = ratio
         if seed is not None:
             body["seed"] = seed
-        data = self.post(self.API_PATH, body)
+        data = self.post(self.API_PATH, body, model_family=_image_family(size))
         return data["data"][0]["url"]
 
     @staticmethod
@@ -152,25 +160,33 @@ class VideoClient(AgnesClient):
     """视频生成客户端（create / poll）。"""
 
     API_CREATE = "/v1/videos"
-    MODEL = "agnes-video-v2.0"
 
     def create(self, body: dict) -> str:
         """创建视频生成任务，返回 task_id。"""
-        full_body = {"model": self.MODEL, **body}
-        data = self.post(self.API_CREATE, full_body)
+        full_body = {"model": get_video_model(), **body}
+        data = self.post(self.API_CREATE, full_body, model_family="video")
         return data.get("id", "")
 
-    def poll(self, task_id: str, timeout: int = 300, interval: int = 5) -> dict:
+    def poll(self, task_id: str, timeout: int = 600, interval: float = 2.0) -> dict:
         """轮询视频任务直到完成或超时。
+
+        使用视频查询端点: /agnesapi?video_id={id}&model_name={video_model}
+        间隔自适应：从 interval 起每次 +0.5s，封顶 5s；
+        poll 走 video_poll 独立预算，不与视频创建任务争抢 1 RPM 池。
 
         Returns:
             包含 status/url/error 的 dict
         """
+        from urllib.parse import urlencode
+
         deadline = _time.time() + timeout
+        current = float(interval)
         while _time.time() < deadline:
-            data = self.get(f"/v1/videos/{task_id}")
+            params = urlencode({"video_id": task_id, "model_name": get_video_model()})
+            data = self.get(f"/agnesapi?{params}", model_family="video_poll")
             status = data.get("status", "")
             if status in ("completed", "failed"):
                 return data
-            _time.sleep(interval)
+            _time.sleep(current)
+            current = min(5.0, current + 0.5)
         raise TimeoutError(f"Video task {task_id} not completed within {timeout}s")

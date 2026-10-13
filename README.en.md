@@ -62,6 +62,8 @@ All output paths and tool paths are managed by `~/.config/agnes/paths.yaml`. Scr
 | `ffmpeg_bin` | ffmpeg path | `ffmpeg` (uses PATH) |
 | `ffprobe_bin` | ffprobe path | `ffprobe` (uses PATH) |
 | `font_paths` | Chinese font paths (tried in order) | `[]` (auto-fallback) |
+| `image_model` | Image model name | `agnes-image-2.5-flash` |
+| `video_model` | Video model name | `agnes-video-2.5-flash` |
 | `cleanup.prompt` | Whether to prompt cleanup of intermediates | `true` |
 | `cleanup.default_yes` | Default cleanup answer | `true` |
 
@@ -74,6 +76,8 @@ ffmpeg_bin: /opt/homebrew/bin/ffmpeg
 font_paths:
   - /System/Library/Fonts/PingFang.ttc
   - /System/Library/Fonts/STHeiti Light.ttc
+image_model: agnes-image-2.5-flash
+video_model: agnes-video-2.5-flash
 cleanup:
   prompt: true
   default_yes: true
@@ -263,8 +267,8 @@ python3 scripts/pipelines/today-in-history-pipeline.py
 | Item | Value |
 |------|-------|
 | Base URL | `https://apihub.agnes-ai.com` |
-| Image Model | `agnes-image-2.1-flash` |
-| Video Model | `agnes-video-v2.0` |
+| Image Model | `agnes-image-2.5-flash` |
+| Video Model | `agnes-video-2.5-flash` |
 | Auth | `Authorization: Bearer <API_KEY>` |
 
 ### Image Sizes
