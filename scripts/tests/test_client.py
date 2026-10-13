@@ -92,6 +92,18 @@ class TestImageClientT2I:
         _path, body = client.post.call_args[0]
         assert "seed" not in body
 
+    def test_t2i_passes_image_budget_family(self):
+        """t2i threads the size-tier budget family into post()."""
+        from client import ImageClient
+        client = ImageClient()
+        client.post = MagicMock(return_value={"data": [{"url": "https://example.com/img.png"}]})
+
+        client.t2i("a cat", size="1024x768")
+        assert client.post.call_args[1]["model_family"] == "image-1k"
+
+        client.t2i("a cat", size="2K")
+        assert client.post.call_args[1]["model_family"] == "image-2k"
+
 
 # ─── ImageClient.i2i ─────────────────────────────────────────────
 
@@ -289,6 +301,57 @@ class TestVideoClientPoll:
         assert "/agnesapi?" in call_args
         assert "video_id=task-abc" in call_args
         assert "model_name=test-video-model" in call_args
+
+    def test_poll_uses_video_poll_budget_family(self):
+        """poll requests use the video_poll family, never the video-create pool."""
+        from client import VideoClient
+        client = VideoClient()
+        client.get = MagicMock(return_value={"status": "completed", "metadata": {"url": "https://example.com/v.mp4"}})
+
+        client.poll("task-xyz", timeout=10)
+        assert client.get.call_args[1]["model_family"] == "video_poll"
+
+    def test_poll_create_uses_video_family(self):
+        """Video creation requests are charged to the video budget."""
+        from client import VideoClient
+        client = VideoClient()
+        client.post = MagicMock(return_value={"id": "task-1"})
+
+        with patch("client.get_video_model", return_value="test-video-model"):
+            task_id = client.create({"prompt": "a cat"})
+        assert task_id == "task-1"
+        assert client.post.call_args[1]["model_family"] == "video"
+
+    def test_poll_interval_adapts_up_to_cap(self):
+        """Poll interval grows +0.5s per iteration from 2.0s, capped at 5.0s."""
+        from client import VideoClient
+        client = VideoClient()
+        client.get = MagicMock(side_effect=[
+            {"status": "processing"},
+            {"status": "processing"},
+            {"status": "completed", "metadata": {"url": "https://example.com/v.mp4"}},
+        ])
+
+        with patch("client._time.sleep") as mock_sleep:
+            client.poll("task-adapt", timeout=30)
+
+        slept = [c[0][0] for c in mock_sleep.call_args_list]
+        assert slept == [2.0, 2.5]
+
+    def test_poll_interval_respects_cap(self):
+        """Adaptive interval never exceeds 5.0s even after many iterations."""
+        from client import VideoClient
+        client = VideoClient()
+        statuses = [{"status": "processing"} for _ in range(10)]
+        statuses.append({"status": "completed", "metadata": {"url": "https://example.com/v.mp4"}})
+        client.get = MagicMock(side_effect=statuses)
+
+        with patch("client._time.sleep") as mock_sleep:
+            client.poll("task-cap", timeout=60)
+
+        slept = [c[0][0] for c in mock_sleep.call_args_list]
+        assert max(slept) <= 5.0
+        assert slept == [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.0, 5.0, 5.0]
 
 
 class TestModelConfig:
