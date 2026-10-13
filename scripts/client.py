@@ -153,7 +153,7 @@ class VideoClient(AgnesClient):
     """视频生成客户端（create / poll）。"""
 
     API_CREATE = "/v1/videos"
-    MODEL = "agnes-video-v2.0"
+    MODEL = "agnes-video-2.5-flash"
 
     def create(self, body: dict) -> str:
         """创建视频生成任务，返回 task_id。"""
@@ -161,15 +161,20 @@ class VideoClient(AgnesClient):
         data = self.post(self.API_CREATE, full_body)
         return data.get("id", "")
 
-    def poll(self, task_id: str, timeout: int = 300, interval: int = 5) -> dict:
+    def poll(self, task_id: str, timeout: int = 600, interval: int = 2) -> dict:
         """轮询视频任务直到完成或超时。
+
+        使用 Video 2.5 Flash 的推荐端点: /agnesapi?video_id={id}&model_name=agnes-video-2.5-flash
 
         Returns:
             包含 status/url/error 的 dict
         """
+        from urllib.parse import urlencode
+
         deadline = _time.time() + timeout
         while _time.time() < deadline:
-            data = self.get(f"/v1/videos/{task_id}")
+            params = urlencode({"video_id": task_id, "model_name": self.MODEL})
+            data = self.get(f"/agnesapi?{params}")
             status = data.get("status", "")
             if status in ("completed", "failed"):
                 return data

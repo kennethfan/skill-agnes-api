@@ -231,12 +231,12 @@ class TestVideoClientPoll:
         client = VideoClient()
         client.get = MagicMock(return_value={
             "status": "completed",
-            "url": "https://example.com/video.mp4",
+            "metadata": {"url": "https://example.com/video.mp4"},
         })
 
         result = client.poll("task-123", timeout=10, interval=1)
         assert result["status"] == "completed"
-        assert result["url"] == "https://example.com/video.mp4"
+        assert result["metadata"]["url"] == "https://example.com/video.mp4"
 
     def test_poll_returns_failed(self):
         """poll returns data when status is 'failed'."""
@@ -258,7 +258,7 @@ class TestVideoClientPoll:
         client.get = MagicMock(side_effect=[
             {"status": "processing"},
             {"status": "processing"},
-            {"status": "completed", "url": "https://example.com/video.mp4"},
+            {"status": "completed", "metadata": {"url": "https://example.com/video.mp4"}},
         ])
 
         result = client.poll("task-789", timeout=30, interval=1)
@@ -275,10 +275,14 @@ class TestVideoClientPoll:
             client.poll("task-timeout", timeout=1, interval=1)
 
     def test_poll_calls_correct_path(self):
-        """poll GETs the correct task endpoint."""
+        """poll GETs the correct task endpoint with model_name parameter."""
         from client import VideoClient
         client = VideoClient()
-        client.get = MagicMock(return_value={"status": "completed", "url": "https://example.com/v.mp4"})
+        client.get = MagicMock(return_value={"status": "completed", "metadata": {"url": "https://example.com/v.mp4"}})
 
         client.poll("task-abc", timeout=10, interval=1)
-        client.get.assert_called_once_with("/v1/videos/task-abc")
+        client.get.assert_called_once()
+        call_args = client.get.call_args[0][0]
+        assert "/agnesapi?" in call_args
+        assert "video_id=task-abc" in call_args
+        assert "model_name=agnes-video-2.5-flash" in call_args
