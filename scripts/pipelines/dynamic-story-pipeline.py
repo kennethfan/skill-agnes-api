@@ -6,7 +6,7 @@
 视频端点，为每镜生成真实运动 clip：
 
   S1. i2i 定帧    ImageClient.i2i(锚定角色图, scene.frame) → 每镜静态关键帧 PNG
-  S2. i2v 动态化  VideoClient.create({image, prompt: scene.motion, num_frames, frame_rate}) → 运动 clip MP4
+  S2. i2v 动态化  VideoClient.create({mode: reference, images, prompt: scene.motion, size: 720P, aspect_ratio, seconds}) → 运动 clip MP4
   S3. 音频/字幕   edge-tts 对白 + Pillow 字幕 PNG + ffmpeg overlay（按对白时间戳 enable）
   S4. 合成        ffmpeg concat 全部镜头 → 最终 MP4
 
@@ -16,6 +16,7 @@
 """
 
 import argparse
+import math
 import shutil
 import subprocess
 import sys
@@ -54,14 +55,21 @@ AGNES_SIZE = "2K"
 AGNES_RATIO = "9:16"
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
-FPS = 24
 OUTPUT_SUBDIR = "儿童-短剧"
 EDGE_TTS_RATE = "-30%"
 NARRATOR_VOICE = "zh-CN-YunxiaNeural"
 
-# 视频帧数档（8n+1 规则 ≤441，@24fps 对应秒数）
-FRAME_SECONDS = {81: 3.4, 121: 5.0, 161: 6.7, 201: 8.4, 241: 10.0,
-                 281: 11.7, 321: 13.4, 361: 15.0, 401: 16.7, 441: 18.4}
+# Video 2.5 Flash 仅支持 720P，时长 4–12s（字符串）；分块上限取 10s 留余量
+VIDEO_SIZE = "720P"
+VIDEO_ASPECT = "9:16"  # main() 中按输出尺寸推导（横→16:9/竖→9:16/方→1:1）
+VIDEO_SECONDS_MIN = 4
+VIDEO_SECONDS_MAX = 12
+MAX_BLOCK_SECONDS = 10.0
+
+
+def _pick_seconds(bdur: float) -> str:
+    """块音频时长 → Video 2.5 Flash 的 seconds 参数（4–12s 字符串，向上取整并夹紧）"""
+    return str(max(VIDEO_SECONDS_MIN, min(VIDEO_SECONDS_MAX, math.ceil(bdur))))
 
 
 def _audio_duration(path: Path) -> float:
@@ -85,14 +93,6 @@ def _resolve_voice(character: str, char_map: dict) -> str:
     if c in ("", "旁白", "叙述"):
         return NARRATOR_VOICE
     return NARRATOR_VOICE
-
-
-def _pick_frames(seconds: float) -> int:
-    """选满足 8n+1 且时长 ≥ 目标秒数的最小帧数档"""
-    for f, sec in sorted(FRAME_SECONDS.items()):
-        if sec >= seconds:
-            return f
-    return 441
 
 
 def _wrap_text(text: str, max_chars: int = 15) -> str:
@@ -163,13 +163,14 @@ def main() -> None:
 
     if args.work_dir:
         _set_work_dir(Path(args.work_dir))
-    global OUTPUT_SUBDIR, VIDEO_WIDTH, VIDEO_HEIGHT, AGNES_SIZE, EDGE_TTS_RATE
+    global OUTPUT_SUBDIR, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_ASPECT, AGNES_SIZE, EDGE_TTS_RATE
     if args.subdir:
         OUTPUT_SUBDIR = args.subdir
     if args.width:
         VIDEO_WIDTH = args.width
     if args.height:
         VIDEO_HEIGHT = args.height
+    VIDEO_ASPECT = "16:9" if VIDEO_WIDTH > VIDEO_HEIGHT else ("1:1" if VIDEO_WIDTH == VIDEO_HEIGHT else "9:16")
     if args.size:
         AGNES_SIZE = args.size
     if args.rate:
@@ -189,7 +190,6 @@ def main() -> None:
 
     # ───────── S1+S2: 逐镜 i2i 定帧 → i2v 动态 clip（超 10s 镜自动拆块） ─────────
     per_scene: dict[int, dict] = {}
-    MAX_FRAMES = 241  # 1080p/9:16 档上限（约 10s）
     for si, sc in enumerate(scenes):
         n = si + 1
         print(f"\n── 镜 {n}/{len(scenes)} ──")
@@ -203,14 +203,14 @@ def main() -> None:
                 print(f"  [tts] {d['character']}: {d['text'][:18]}…")
                 _generate_audio(d["text"], v, ap)
             audios.append(ap)
-        # 音频累计时长 → 分块（每块 ≤ MAX_FRAMES 帧≈10s），跨块的对白被切断处无需精确切分：
+        # 音频累计时长 → 分块（每块 ≤10s），跨块的对白被切断处无需精确切分：
         # 块边界取对白边界，保证每块整段对白完整
         adurs = [_audio_duration(a) for a in audios]
         total_dur = sum(adurs)
         blocks: list[list[int]] = [[]]  # 每块是对白索引列表
         cur = 0.0
         for j, ad in enumerate(adurs):
-            if blocks[-1] and cur + ad > 10.0:
+            if blocks[-1] and cur + ad > MAX_BLOCK_SECONDS:
                 blocks.append([])
                 cur = 0.0
             blocks[-1].append(j)
@@ -232,26 +232,23 @@ def main() -> None:
             frame_png.write_bytes(imgs.download(url))
         print(f"  [i2i] 定帧 ✓ {frame_png.name}")
 
-        # 3) i2v 动态化（image 需 data URI/URL，VideoClient 透传不自动转；
-        #    必须显式 width/height 否则服务端回退 1152x768 横屏）
+        # 3) i2v 动态化（Video 2.5 Flash reference 模式：images 数组传定帧 data URI；
+        #    仅支持 720P，宽高比按输出尺寸推导）
         block_clips: list[Path] = []
         ok = True
         for bi, idxs in enumerate(blocks):
             bdur = sum(adurs[j] for j in idxs)
-            bnf = _pick_frames(bdur)
-            if bnf > MAX_FRAMES:
-                bnf = MAX_FRAMES
-            bdur_est = FRAME_SECONDS[bnf]
+            bsec = _pick_seconds(bdur)
             clip = work / f"s{si:02d}-b{bi}-clip.mp4"
             if not clip.exists() or args.force:
-                print(f"  [i2v] 块{bi+1}/{len(blocks)}（{bnf} 帧 ≈ {bdur_est:.1f}s）…")
+                print(f"  [i2v] 块{bi+1}/{len(blocks)}（音频 {bdur:.1f}s → 请求 {bsec}s）…")
                 image_ref = ImageClient._resolve_image(str(frame_png))
                 task = None
                 for _try in range(10):
                     try:
-                        task = vids.create({"prompt": sc["motion"], "image": image_ref,
-                                            "width": VIDEO_WIDTH, "height": VIDEO_HEIGHT,
-                                            "num_frames": bnf, "frame_rate": FPS})
+                        task = vids.create({"prompt": sc["motion"], "mode": "reference",
+                                            "size": VIDEO_SIZE, "aspect_ratio": VIDEO_ASPECT,
+                                            "seconds": bsec, "images": [image_ref]})
                         break
                     except Exception:
                         time.sleep(12)
@@ -259,13 +256,13 @@ def main() -> None:
                     print(f"  ⚠️ 镜 {n} 块{bi+1} create 失败（限流），跳过，下次运行续跑")
                     ok = False
                     break
-                # 自定义轮询：容忍 GET 偶发 HTTP 400（任务仍在推进）
+                # 自定义轮询（Video 2.5 Flash 端点）：容忍 GET 偶发 HTTP 400（任务仍在推进）
                 deadline = time.time() + 600
                 status = None
                 data = {}
                 while time.time() < deadline:
                     try:
-                        data = vids.get(f"/v1/videos/{task}")
+                        data = vids.get(f"/agnesapi?{urlencode({'video_id': task, 'model_name': VideoClient.MODEL})}")
                         status = data.get("status", "")
                         if status in ("completed", "failed"):
                             break
@@ -277,19 +274,23 @@ def main() -> None:
                     print(f"  ⚠️ 镜 {n} 块{bi+1} 视频失败: {data.get('error') if status else '超时'}，跳过，下次运行续跑")
                     ok = False
                     break
-                # 下载地址来自独立端点 /agnesapi?video_id=（429 限流时等待重试）
+                # 下载地址来自独立端点 /agnesapi?video_id=&model_name=（429 限流时等待重试；
+                # Video 2.5 Flash 的 URL 在 metadata.url 中）
                 dl = None
                 for _try in range(12):
                     try:
-                        dl = vids.get(f"/agnesapi?{urlencode({'video_id': task})}")
+                        dl = vids.get(f"/agnesapi?{urlencode({'video_id': task, 'model_name': VideoClient.MODEL})}")
                         break
                     except Exception:
                         time.sleep(10)
-                if not dl or dl.get("status") != "completed" or not dl.get("url"):
+                video_url = ((dl.get("metadata", {}) if dl else {}) or {}).get("url", "")
+                if not video_url and dl:
+                    video_url = dl.get("url", "")  # 兼容旧格式
+                if not dl or dl.get("status") != "completed" or not video_url:
                     print(f"  ⚠️ 镜 {n} 块{bi+1} 下载地址获取失败: {dl}，跳过，下次运行续跑")
                     ok = False
                     break
-                clip.write_bytes(imgs.download(dl["url"]))
+                clip.write_bytes(imgs.download(video_url))
             block_clips.append(clip)
         if not ok:
             print(f"  ⏭ 镜 {n} 有块失败，整体跳过（下次运行续跑）")
