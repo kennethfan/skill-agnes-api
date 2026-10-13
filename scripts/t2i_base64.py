@@ -4,7 +4,7 @@ import base64
 import time
 from pathlib import Path
 from client import ImageClient
-from utils import get_default_dir
+from utils import get_default_dir, get_image_model
 
 OUTPUT_DIR = get_default_dir()
 
@@ -12,7 +12,7 @@ client = ImageClient()
 data = client.post(
     "/v1/images/generations",
     {
-        "model": "agnes-image-2.5-flash",
+        "model": get_image_model(),
         "prompt": "A clean product photo of a glass cube on a white studio background, soft shadows, high detail",
         "size": "1024x768",
         "return_base64": True,

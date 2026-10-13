@@ -7,10 +7,10 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode
 from client import AgnesClient
-from utils import get_default_dir
+from utils import get_default_dir, get_video_model
 
 VIDEO_ID = "video_YOUR_VIDEO_ID"
-MODEL_NAME = "agnes-video-2.5-flash"
+MODEL_NAME = get_video_model()
 OUTPUT_DIR = get_default_dir()
 
 client = AgnesClient()
