@@ -38,6 +38,7 @@ class AgnesClient:
             f"{self.BASE_URL}{path}",
             data=json.dumps(body).encode(),
             method="POST",
+            timeout=180,
             max_retries=self._max_retries,
         )
         return json.loads(resp.read())
@@ -53,7 +54,7 @@ class AgnesClient:
 
     def download(self, url: str) -> bytes:
         """下载文件内容（CDN URL，无 key rotation）。"""
-        with urlopen(url) as resp:
+        with urlopen(url, timeout=180) as resp:
             return resp.read()
 
 
