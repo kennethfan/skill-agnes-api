@@ -18,12 +18,13 @@ class TestImageClientT2I:
         client = ImageClient()
         client.post = MagicMock(return_value={"data": [{"url": "https://example.com/img.png"}]})
 
-        url = client.t2i("a cat", size="1024x768")
+        with patch("client.get_image_model", return_value="test-image-model"):
+            url = client.t2i("a cat", size="1024x768")
 
         client.post.assert_called_once()
         _path, body = client.post.call_args[0]
         assert body == {
-            "model": "agnes-image-2.5-flash",
+            "model": "test-image-model",
             "prompt": "a cat",
             "size": "1024x768",
         }
@@ -103,12 +104,13 @@ class TestImageClientI2I:
         client = ImageClient()
         client.post = MagicMock(return_value={"data": [{"url": "https://example.com/img.png"}]})
 
-        with patch.object(ImageClient, "_resolve_image", return_value="data:image/png;base64,abc"):
+        with patch.object(ImageClient, "_resolve_image", return_value="data:image/png;base64,abc"), \
+                patch("client.get_image_model", return_value="test-image-model"):
             client.i2i("/path/to/img.jpg", "make it vibrant")
 
         client.post.assert_called_once()
         _path, body = client.post.call_args[0]
-        assert body["model"] == "agnes-image-2.5-flash"
+        assert body["model"] == "test-image-model"
         assert body["prompt"] == "make it vibrant"
         assert body["size"] == "1024x768"
         assert body["extra_body"]["image"] == ["data:image/png;base64,abc"]
@@ -280,9 +282,28 @@ class TestVideoClientPoll:
         client = VideoClient()
         client.get = MagicMock(return_value={"status": "completed", "metadata": {"url": "https://example.com/v.mp4"}})
 
-        client.poll("task-abc", timeout=10, interval=1)
+        with patch("client.get_video_model", return_value="test-video-model"):
+            client.poll("task-abc", timeout=10, interval=1)
         client.get.assert_called_once()
         call_args = client.get.call_args[0][0]
         assert "/agnesapi?" in call_args
         assert "video_id=task-abc" in call_args
-        assert "model_name=agnes-video-2.5-flash" in call_args
+        assert "model_name=test-video-model" in call_args
+
+
+class TestModelConfig:
+    """Seam: model names come from paths.yaml, with built-in defaults."""
+
+    def test_default_models_when_config_empty(self):
+        """get_image_model/get_video_model fall back to 2.5-flash defaults."""
+        from utils import get_image_model, get_video_model
+        with patch("utils._load_config", return_value={}):
+            assert get_image_model() == "agnes-image-2.5-flash"
+            assert get_video_model() == "agnes-video-2.5-flash"
+
+    def test_custom_models_from_config(self):
+        """Configured image_model/video_model are honored."""
+        from utils import get_image_model, get_video_model
+        with patch("utils._load_config", return_value={"image_model": "custom-img", "video_model": "custom-vid"}):
+            assert get_image_model() == "custom-img"
+            assert get_video_model() == "custom-vid"

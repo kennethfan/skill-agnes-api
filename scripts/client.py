@@ -17,7 +17,7 @@ import json
 import time as _time
 from pathlib import Path
 from urllib.request import urlopen
-from utils import get_key_pool, urlopen_with_rotation
+from utils import get_image_model, get_key_pool, get_video_model, urlopen_with_rotation
 
 
 class AgnesClient:
@@ -62,7 +62,6 @@ class ImageClient(AgnesClient):
     """图片生成客户端（t2i / i2i）。"""
 
     API_PATH = "/v1/images/generations"
-    MODEL = "agnes-image-2.5-flash"
 
     def t2i(
         self,
@@ -81,7 +80,7 @@ class ImageClient(AgnesClient):
             seed: 随机种子（相同 seed 复现结果）
             **body_extras: 额外 body 字段（如 extra_body、return_base64）
         """
-        body: dict = {"model": self.MODEL, "prompt": prompt, "size": size, **body_extras}
+        body: dict = {"model": get_image_model(), "prompt": prompt, "size": size, **body_extras}
         if ratio:
             body["ratio"] = ratio
         if seed is not None:
@@ -113,7 +112,7 @@ class ImageClient(AgnesClient):
         extra.setdefault("response_format", "url")
         extra.setdefault("image", [image_ref])
         body: dict = {
-            "model": self.MODEL,
+            "model": get_image_model(),
             "prompt": prompt,
             "size": size,
             "extra_body": extra,
@@ -153,18 +152,17 @@ class VideoClient(AgnesClient):
     """视频生成客户端（create / poll）。"""
 
     API_CREATE = "/v1/videos"
-    MODEL = "agnes-video-2.5-flash"
 
     def create(self, body: dict) -> str:
         """创建视频生成任务，返回 task_id。"""
-        full_body = {"model": self.MODEL, **body}
+        full_body = {"model": get_video_model(), **body}
         data = self.post(self.API_CREATE, full_body)
         return data.get("id", "")
 
     def poll(self, task_id: str, timeout: int = 600, interval: int = 2) -> dict:
         """轮询视频任务直到完成或超时。
 
-        使用 Video 2.5 Flash 的推荐端点: /agnesapi?video_id={id}&model_name=agnes-video-2.5-flash
+        使用视频查询端点: /agnesapi?video_id={id}&model_name={video_model}
 
         Returns:
             包含 status/url/error 的 dict
@@ -173,7 +171,7 @@ class VideoClient(AgnesClient):
 
         deadline = _time.time() + timeout
         while _time.time() < deadline:
-            params = urlencode({"video_id": task_id, "model_name": self.MODEL})
+            params = urlencode({"video_id": task_id, "model_name": get_video_model()})
             data = self.get(f"/agnesapi?{params}")
             status = data.get("status", "")
             if status in ("completed", "failed"):
