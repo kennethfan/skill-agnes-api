@@ -54,7 +54,7 @@ def _set_work_dir(wd: Path) -> None:
 
 # AGNES
 AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
-AGNES_MODEL = "agnes-image-2.1-flash"
+AGNES_MODEL = "agnes-image-2.5-flash"
 AGNES_KEY_FILE = Path.home() / ".config" / "agnes" / "key"
 AGNES_SIZE = "2K"
 AGNES_RATIO = "9:16"
@@ -610,7 +610,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--height", type=int, default=None, help="视频高度（默认 1920）")
     p.add_argument("--size", default=None, help="AGNES 图片尺寸（默认 2K）")
     p.add_argument("--ratio", default=None, help="AGNES 图片宽高比（默认 9:16）")
-    p.add_argument("--model", default=None, help="AGNES 图片模型（默认 agnes-image-2.1-flash）")
+    p.add_argument("--model", default=None, help="AGNES 图片模型（默认 agnes-image-2.5-flash）")
     p.add_argument("--font", default=None, help="字体文件路径（默认 PingFang.ttc）")
     p.add_argument("--subtitle-size", type=int, default=None, help="字幕字号（默认 40）")
     p.add_argument("--title-size", type=int, default=None, help="标题字号（默认 80）")
