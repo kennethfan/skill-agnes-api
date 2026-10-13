@@ -30,7 +30,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from client import ImageClient, VideoClient  # noqa: E402
 from utils import (  # noqa: E402
-    get_ffmpeg_bin, get_ffprobe_bin, get_font_path,
+    get_ffmpeg_bin, get_ffprobe_bin, get_font_path, get_video_model,
 )
 
 # ─────────────────────────── 路径（可 --work-dir 覆盖） ───────────────────────────
@@ -50,7 +50,6 @@ def _set_work_dir(wd: Path) -> None:
 
 
 # ─────────────────────────── 生成参数（可 --xxx 覆盖） ───────────────────────────
-AGNES_MODEL = "agnes-image-2.5-flash"
 AGNES_SIZE = "2K"
 AGNES_RATIO = "9:16"
 VIDEO_WIDTH = 1080
@@ -262,7 +261,7 @@ def main() -> None:
                 data = {}
                 while time.time() < deadline:
                     try:
-                        data = vids.get(f"/agnesapi?{urlencode({'video_id': task, 'model_name': VideoClient.MODEL})}")
+                        data = vids.get(f"/agnesapi?{urlencode({'video_id': task, 'model_name': get_video_model()})}")
                         status = data.get("status", "")
                         if status in ("completed", "failed"):
                             break
@@ -279,7 +278,7 @@ def main() -> None:
                 dl = None
                 for _try in range(12):
                     try:
-                        dl = vids.get(f"/agnesapi?{urlencode({'video_id': task, 'model_name': VideoClient.MODEL})}")
+                        dl = vids.get(f"/agnesapi?{urlencode({'video_id': task, 'model_name': get_video_model()})}")
                         break
                     except Exception:
                         time.sleep(10)
